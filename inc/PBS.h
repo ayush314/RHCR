@@ -1,6 +1,7 @@
 #pragma once
 #include "PBSNode.h"
 #include "MAPFSolver.h"
+#include "WorkstationCommon.h"
 #include <ctime>
 
 // TODO: add topological sorting
@@ -11,6 +12,9 @@ class PBS:
 public:
     bool lazyPriority;
     bool prioritize_start = true;
+    string station_policy = "vanilla";
+    int workstation_pressure_threshold = -1;
+    vector<WorkstationAgentContext> workstation_context;
 
 	 // runtime breakdown
     double runtime_rt = 0;
@@ -47,7 +51,10 @@ public:
 	void save_search_tree(const std::string &fileName) const;
 	void save_constraints_in_goal_node(const std::string &fileName) const;
 
-	string get_name() const {return "PBS"; }
+    string get_name() const {return "PBS"; }
+    void set_workstation_policy(const string& policy) { station_policy = policy; }
+    void set_workstation_pressure_threshold(int threshold) { workstation_pressure_threshold = threshold; }
+    void set_workstation_context(const vector<WorkstationAgentContext>& context) { workstation_context = context; }
 
 	void clear();
 
@@ -122,5 +129,11 @@ private:
     static bool wait_at_start(const Path& path, int start_location, int timestep) ;
     void find_replan_agents(PBSNode* node, const list<Conflict>& conflicts,
             unordered_set<int>& replan);
+    bool prefer_workstation_branch(const Conflict& conflict, pair<int, int>& preferred_priority) const;
+    tuple<int, int, int> distance_age_key(int agent) const;
+    tuple<int, int, int, int> pressure_aware_front_runner_key(int agent) const;
+    int workstation_front_runner(int station_id) const;
+    int effective_workstation_pressure_threshold() const;
+    bool workstation_pressure_active(int pressure) const;
+    bool maybe_add_workstation_softzone(ReservationTable& rt, int agent);
 };
-

@@ -2,10 +2,11 @@
 #include "SortingSystem.h"
 #include "OnlineSystem.h"
 #include "BeeSystem.h"
+#include "WorkstationGraph.h"
+#include "WorkstationSystem.h"
 #include "ID.h"
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
-
 
 void set_parameters(BasicSystem& system, const boost::program_options::variables_map& vm)
 {
@@ -68,7 +69,7 @@ MAPFSolver* set_solver(const BasicGraph& G, const boost::program_options::variab
         pbs->setRT(vm["CAT"].as<bool>(), prioritize_start);
 		mapf_solver = pbs;
 	}
-	else if (solver_name == "WHCA")
+    else if (solver_name == "WHCA")
 	{
 		mapf_solver = new WHCAStar(G, *path_planner);
 	}
@@ -100,23 +101,27 @@ int main(int argc, char** argv)
 	po::options_description desc("Allowed options");
 	desc.add_options()
 		("help", "produce help message")
-		("scenario", po::value<std::string>()->required(), "scenario (SORTING, KIVA, ONLINE, BEE)")
-		("map,m", po::value<std::string>()->required(), "input map file")
+		("scenario", po::value<std::string>()->required(), "scenario (SORTING, KIVA, ONLINE, BEE, WORKSTATION)")
+		("map,m", po::value<std::string>()->default_value(""), "input map file")
+        ("benchmark", po::value<std::string>()->default_value(""), "input workstation benchmark json")
 		("task", po::value<std::string>()->default_value(""), "input task file")
 		("output,o", po::value<std::string>()->default_value("../exp/test"), "output folder name")
 		("agentNum,k", po::value<int>()->required(), "number of drives")
 		("cutoffTime,t", po::value<int>()->default_value(60), "cutoff time (seconds)")
 		("seed,d", po::value<int>(), "random seed")
 		("screen,s", po::value<int>()->default_value(1), "screen option (0: none; 1: results; 2:all)")
-		("solver", po::value<string>()->default_value("PBS"), "solver (LRA, PBS, WHCA, ECBS)")
+			("solver", po::value<string>()->default_value("PBS"), "solver (LRA, PBS, WHCA, ECBS)")
 		("id", po::value<bool>()->default_value(false), "independence detection")
 		("single_agent_solver", po::value<string>()->default_value("SIPP"), "single-agent solver (ASTAR, SIPP)")
 		("lazyP", po::value<bool>()->default_value(false), "use lazy priority")
 		("simulation_time", po::value<int>()->default_value(5000), "run simulation")
 		("simulation_window", po::value<int>()->default_value(5), "call the planner every simulation_window timesteps")
 		("travel_time_window", po::value<int>()->default_value(0), "consider the traffic jams within the given window")
-		("planning_window", po::value<int>()->default_value(INT_MAX / 2),
-		        "the planner outputs plans with first planning_window timesteps collision-free")
+        ("planning_window", po::value<int>()->default_value(20),
+			        "the planner outputs plans with first planning_window timesteps collision-free")
+        ("service_time", po::value<int>()->default_value(3), "workstation dwell time")
+        ("pressure_threshold", po::value<int>()->default_value(-1), "workstation pressure trigger threshold override; -1 uses the station policy default")
+        ("station_policy", po::value<string>()->default_value("vanilla"), "workstation planning policy (vanilla, distance_age, pressure_aware)")
 		("potential_function", po::value<string>()->default_value("NONE"), "potential function (NONE, SOC, IC)")
 		("potential_threshold", po::value<double>()->default_value(0), "potential threshold")
 		("rotation", po::value<bool>()->default_value(false), "consider rotation")
@@ -142,6 +147,9 @@ int main(int argc, char** argv)
 	}
 
 	po::notify(vm);
+    string scenario = vm["scenario"].as<string>();
+    string map_path = vm["map"].as<string>();
+    string benchmark_path = vm["benchmark"].as<string>();
 
     // check params
     if (vm["hold_endpoints"].as<bool>() or vm["dummy_paths"].as<bool>())
@@ -162,6 +170,29 @@ int main(int argc, char** argv)
             exit(-1);
         }
     }
+    if (scenario == "WORKSTATION")
+    {
+        if (benchmark_path.empty())
+        {
+            std::cerr << "WORKSTATION requires --benchmark" << endl;
+            exit(-1);
+        }
+        if (vm["hold_endpoints"].as<bool>() || vm["dummy_paths"].as<bool>())
+        {
+            std::cerr << "WORKSTATION does not support hold_endpoints or dummy_paths" << endl;
+            exit(-1);
+        }
+        if (vm["solver"].as<string>() != "PBS" || vm["id"].as<bool>())
+        {
+            std::cerr << "WORKSTATION requires --solver PBS with --id false" << endl;
+            exit(-1);
+        }
+    }
+    else if (map_path.empty())
+    {
+        std::cerr << "Scenario " << scenario << " requires --map" << endl;
+        exit(-1);
+    }
 
     // make dictionary
 	boost::filesystem::path dir(vm["output"].as<std::string>() +"/");
@@ -175,10 +206,10 @@ int main(int argc, char** argv)
 	}
 
 
-	if (vm["scenario"].as<string>() == "KIVA")
+	if (scenario == "KIVA")
 	{
 		KivaGrid G;
-		if (!G.load_map(vm["map"].as<std::string>()))
+		if (!G.load_map(map_path))
 			return -1;
 		MAPFSolver* solver = set_solver(G, vm);
 		KivaSystem system(G, *solver);
@@ -187,10 +218,10 @@ int main(int argc, char** argv)
 		system.simulate(vm["simulation_time"].as<int>());
 		return 0;
 	}
-	else if (vm["scenario"].as<string>() == "SORTING")
+	else if (scenario == "SORTING")
 	{
 		 SortingGrid G;
-		 if (!G.load_map(vm["map"].as<std::string>()))
+		 if (!G.load_map(map_path))
 			 return -1;
 		 MAPFSolver* solver = set_solver(G, vm);
 		 SortingSystem system(G, *solver);
@@ -201,10 +232,10 @@ int main(int argc, char** argv)
 		 system.simulate(vm["simulation_time"].as<int>());
 		 return 0;
 	}
-	else if (vm["scenario"].as<string>() == "ONLINE")
+	else if (scenario == "ONLINE")
 	{
 		OnlineGrid G;
-		if (!G.load_map(vm["map"].as<std::string>()))
+		if (!G.load_map(map_path))
 			return -1;
 		MAPFSolver* solver = set_solver(G, vm);
 		OnlineSystem system(G, *solver);
@@ -215,10 +246,10 @@ int main(int argc, char** argv)
 		system.simulate(vm["simulation_time"].as<int>());
 		return 0;
 	}
-	else if (vm["scenario"].as<string>() == "BEE")
+	else if (scenario == "BEE")
 	{
 		BeeGraph G;
-		if (!G.load_map(vm["map"].as<std::string>()))
+		if (!G.load_map(map_path))
 			return -1;
 		MAPFSolver* solver = set_solver(G, vm);
 		BeeSystem system(G, *solver);
@@ -257,9 +288,24 @@ int main(int argc, char** argv)
 		output.close();
         return 0;
 	}
+    else if (scenario == "WORKSTATION")
+    {
+        WorkstationGrid G;
+        if (!G.load_map(benchmark_path))
+            return -1;
+        MAPFSolver* solver = set_solver(G, vm);
+        WorkstationSystem system(G, *solver);
+        set_parameters(system, vm);
+        system.workstation_service_time = vm["service_time"].as<int>();
+        system.station_policy = vm["station_policy"].as<string>();
+        system.workstation_pressure_threshold = vm["pressure_threshold"].as<int>();
+        G.preprocessing(system.consider_rotation);
+        system.simulate(vm["simulation_time"].as<int>());
+        return 0;
+    }
 	else
 	{
-		cout << "Scenario " << vm["scenario"].as<string>() << "does not exist!" << endl;
+		cout << "Scenario " << scenario << " does not exist!" << endl;
 		return -1;
 	}
 }

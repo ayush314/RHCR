@@ -1,0 +1,88 @@
+{
+  "benchmark_id": "plaza",
+  "description": "20x20 open-floor plaza with 8 wall-mounted workstations, two per edge, and interior pickup endpoints.",
+  "rows": 20,
+  "cols": 20,
+  "walkable_rows": [0, 19],
+  "walkable_cols": [0, 19],
+  "simulation_time_default": 2000,
+  "planning_window_default": 20,
+  "simulation_window_default": 5,
+  "seed_start_default": 0,
+  "seed_count_default": 20,
+  "service_time_default": 3,
+  "task_model": "endpoint_station_alternating",
+  "restrict_station_zones": false,
+  "pickup_endpoints": [
+    [7, 7], [9, 7], [10, 7], [12, 7],
+    [7, 9], [9, 9], [10, 9], [12, 9],
+    [7, 10], [9, 10], [10, 10], [12, 10],
+    [7, 12], [9, 12], [10, 12], [12, 12]
+  ],
+  "stations": [
+    {
+      "station_id": 0,
+      "workstation_cell": [0, 7],
+      "standby_cells": [[1, 6], [1, 7], [1, 8]],
+      "buffer_cells": [[2, 6], [2, 7], [2, 8]],
+      "approach_cells": [[3, 6], [3, 7], [3, 8]],
+      "exit_cells": [[0, 6], [0, 8]]
+    },
+    {
+      "station_id": 1,
+      "workstation_cell": [0, 12],
+      "standby_cells": [[1, 11], [1, 12], [1, 13]],
+      "buffer_cells": [[2, 11], [2, 12], [2, 13]],
+      "approach_cells": [[3, 11], [3, 12], [3, 13]],
+      "exit_cells": [[0, 11], [0, 13]]
+    },
+    {
+      "station_id": 2,
+      "workstation_cell": [19, 7],
+      "standby_cells": [[18, 6], [18, 7], [18, 8]],
+      "buffer_cells": [[17, 6], [17, 7], [17, 8]],
+      "approach_cells": [[16, 6], [16, 7], [16, 8]],
+      "exit_cells": [[19, 6], [19, 8]]
+    },
+    {
+      "station_id": 3,
+      "workstation_cell": [19, 12],
+      "standby_cells": [[18, 11], [18, 12], [18, 13]],
+      "buffer_cells": [[17, 11], [17, 12], [17, 13]],
+      "approach_cells": [[16, 11], [16, 12], [16, 13]],
+      "exit_cells": [[19, 11], [19, 13]]
+    },
+    {
+      "station_id": 4,
+      "workstation_cell": [7, 0],
+      "standby_cells": [[6, 1], [7, 1], [8, 1]],
+      "buffer_cells": [[6, 2], [7, 2], [8, 2]],
+      "approach_cells": [[6, 3], [7, 3], [8, 3]],
+      "exit_cells": [[6, 0], [8, 0]]
+    },
+    {
+      "station_id": 5,
+      "workstation_cell": [12, 0],
+      "standby_cells": [[11, 1], [12, 1], [13, 1]],
+      "buffer_cells": [[11, 2], [12, 2], [13, 2]],
+      "approach_cells": [[11, 3], [12, 3], [13, 3]],
+      "exit_cells": [[11, 0], [13, 0]]
+    },
+    {
+      "station_id": 6,
+      "workstation_cell": [7, 19],
+      "standby_cells": [[6, 18], [7, 18], [8, 18]],
+      "buffer_cells": [[6, 17], [7, 17], [8, 17]],
+      "approach_cells": [[6, 16], [7, 16], [8, 16]],
+      "exit_cells": [[6, 19], [8, 19]]
+    },
+    {
+      "station_id": 7,
+      "workstation_cell": [12, 19],
+      "standby_cells": [[11, 18], [12, 18], [13, 18]],
+      "buffer_cells": [[11, 17], [12, 17], [13, 17]],
+      "approach_cells": [[11, 16], [12, 16], [13, 16]],
+      "exit_cells": [[11, 19], [13, 19]]
+    }
+  ]
+}

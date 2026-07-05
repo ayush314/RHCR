@@ -1,7 +1,23 @@
 #include "PBS.h"
+#include <numeric>
 #include <ctime>
 #include <iostream>
+#include <limits>
 #include "PathTable.h"
+#include "WorkstationGraph.h"
+
+namespace
+{
+constexpr const char* kPressureAwarePolicy = "pressure_aware";
+constexpr int kDefaultPressureThreshold = 2;
+constexpr int kMissingPriorityValue = std::numeric_limits<int>::max() / 4;
+
+bool is_pressure_aware_policy(const std::string& policy)
+{
+    return policy == kPressureAwarePolicy;
+}
+
+}
 
 
 void PBS::clear()
@@ -160,6 +176,26 @@ void PBS::find_conflicts(list<Conflict>& conflicts, int a1, int a2)
 			}
 
 		}
+        if (size1 != size2)
+        {
+            int shorter = size1 < size2 ? a1 : a2;
+            int longer = size1 < size2 ? a2 : a1;
+            int shorter_size = min(window + 1, (int)paths[shorter]->size());
+            int longer_size = min(window + 1, (int)paths[longer]->size());
+            int terminal = paths[shorter]->back().location;
+            if (G.types[terminal] == "Workstation")
+            {
+                for (int timestep = shorter_size; timestep < longer_size; timestep++)
+                {
+                    if (paths[longer]->at(timestep).location == terminal)
+                    {
+                        conflicts.emplace_back(shorter, longer, terminal, -1, timestep);
+                        runtime_detect_conflicts += (double)(std::clock() - t) / CLOCKS_PER_SEC;
+                        return;
+                    }
+                }
+            }
+        }
     }
 	runtime_detect_conflicts += (double)(std::clock() - t) / CLOCKS_PER_SEC;
 }
@@ -319,6 +355,7 @@ bool PBS::find_path(PBSNode* node, int agent)
 	rt.copy(initial_rt);
     rt.build(paths, initial_constraints, node->priorities.get_reachable_nodes(agent),
              agent, starts[agent].location);
+    bool used_softzone = maybe_add_workstation_softzone(rt, agent);
     runtime_get_higher_priority_agents += node->priorities.runtime;
 
     runtime_rt += (double)(std::clock() - t) / CLOCKS_PER_SEC;
@@ -354,6 +391,161 @@ bool PBS::find_path(PBSNode* node, int agent)
     node->paths.emplace_back(agent, path);
     paths[agent] = &node->paths.back().second;
     return true;
+}
+
+tuple<int, int, int> PBS::distance_age_key(int agent) const
+{
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    const auto& ctx = workstation_context[agent];
+    int dist = grid == nullptr ? kMissingPriorityValue : grid->distance_to_workstation(ctx.station_id, starts[agent].location);
+    int task_issue = ctx.task_issue_t >= 0 ? ctx.task_issue_t : kMissingPriorityValue;
+    return make_tuple(dist, task_issue, agent);
+}
+
+tuple<int, int, int, int> PBS::pressure_aware_front_runner_key(int agent) const
+{
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    const auto& ctx = workstation_context[agent];
+    int boundary_entry = ctx.boundary_entry_t >= 0 ? ctx.boundary_entry_t : kMissingPriorityValue;
+    int dist = grid == nullptr ? kMissingPriorityValue : grid->distance_to_workstation(ctx.station_id, starts[agent].location);
+    int task_issue = ctx.task_issue_t >= 0 ? ctx.task_issue_t : kMissingPriorityValue;
+    return make_tuple(boundary_entry, dist, task_issue, agent);
+}
+
+int PBS::workstation_front_runner(int station_id) const
+{
+    int best_agent = -1;
+    tuple<int, int, int, int> best_key;
+    for (int agent = 0; agent < num_of_agents; agent++)
+    {
+        const auto& ctx = workstation_context[agent];
+        if (ctx.phase != WorkstationAgentPhase::TO_STATION || ctx.station_id != station_id)
+            continue;
+        auto key = pressure_aware_front_runner_key(agent);
+        if (best_agent < 0 || key < best_key)
+        {
+            best_agent = agent;
+            best_key = key;
+        }
+    }
+    return best_agent;
+}
+
+int PBS::effective_workstation_pressure_threshold() const
+{
+    if (workstation_pressure_threshold > 0)
+        return workstation_pressure_threshold;
+    return kDefaultPressureThreshold;
+}
+
+bool PBS::workstation_pressure_active(int pressure) const
+{
+    return pressure >= effective_workstation_pressure_threshold();
+}
+
+bool PBS::maybe_add_workstation_softzone(ReservationTable& rt, int agent)
+{
+    if (!is_pressure_aware_policy(station_policy) || workstation_context.size() != (size_t)num_of_agents)
+        return false;
+
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    if (grid == nullptr)
+        return false;
+
+    const auto& ctx = workstation_context[agent];
+    bool used = false;
+    for (int station_id = 0; station_id < (int)grid->stations.size(); station_id++)
+    {
+        int pressure = 0;
+        const auto& station = grid->stations[station_id];
+        for (int other = 0; other < num_of_agents; other++)
+        {
+            int loc = starts[other].location;
+            bool counted = false;
+            if (std::find(station.approach_cells.begin(), station.approach_cells.end(), loc) != station.approach_cells.end())
+            {
+                counted = true;
+            }
+            else if (std::find(station.buffer_cells.begin(), station.buffer_cells.end(), loc) != station.buffer_cells.end() ||
+                     std::find(station.standby_cells.begin(), station.standby_cells.end(), loc) != station.standby_cells.end())
+            {
+                counted = true;
+            }
+            else if (std::find(station.exit_cells.begin(), station.exit_cells.end(), loc) != station.exit_cells.end())
+            {
+                counted = true;
+            }
+            if (counted)
+                pressure++;
+        }
+        if (!workstation_pressure_active(pressure))
+            continue;
+
+        int front = workstation_front_runner(station_id);
+        bool privileged =
+            ctx.phase == WorkstationAgentPhase::TO_STATION &&
+            front == agent;
+        if (privileged)
+            continue;
+
+        for (int loc : station.approach_cells)
+            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
+        for (int loc : station.standby_cells)
+            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
+        for (int loc : station.buffer_cells)
+            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
+        for (int loc : station.exit_cells)
+            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
+        used = true;
+    }
+
+    return used;
+}
+
+bool PBS::prefer_workstation_branch(const Conflict& conflict, pair<int, int>& preferred_priority) const
+{
+    if (station_policy == "vanilla" || workstation_context.size() != (size_t)num_of_agents)
+        return false;
+
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    if (grid == nullptr)
+        return false;
+
+    int a1, a2, v1, v2, t;
+    std::tie(a1, a2, v1, v2, t) = conflict;
+    (void)t;
+
+    const auto& c1 = workstation_context[a1];
+    const auto& c2 = workstation_context[a2];
+    if (c1.station_id < 0 || c1.station_id != c2.station_id)
+        return false;
+    if (!grid->conflict_in_station_microzone(c1.station_id, v1, v2))
+        return false;
+
+    bool a1_station_bound = c1.phase == WorkstationAgentPhase::TO_STATION;
+    bool a2_station_bound = c2.phase == WorkstationAgentPhase::TO_STATION;
+    bool a1_clearing = c1.phase == WorkstationAgentPhase::TO_EXIT;
+    bool a2_clearing = c2.phase == WorkstationAgentPhase::TO_EXIT;
+
+    auto higher_first = [&](int higher, int lower) {
+        preferred_priority = make_pair(lower, higher);
+        return true;
+    };
+
+    if (a1_clearing && a2_station_bound)
+        return higher_first(a1, a2);
+    if (a2_clearing && a1_station_bound)
+        return higher_first(a2, a1);
+    if (!(a1_station_bound && a2_station_bound))
+        return false;
+
+    if (station_policy == "distance_age")
+    {
+        auto k1 = distance_age_key(a1);
+        auto k2 = distance_age_key(a2);
+        return (k1 <= k2) ? higher_first(a1, a2) : higher_first(a2, a1);
+    }
+    return false;
 }
 
 
@@ -541,8 +733,6 @@ bool PBS::generate_root_node()
     if (screen == 2)
         std::cout << "Generate root CT node ..." << std::endl;
 
-    //dummy_start->priorities.copy(initial_priorities);
-
     if (!initial_paths.empty())
     {
         for (int i = 0; i < num_of_agents; i++)
@@ -558,7 +748,21 @@ bool PBS::generate_root_node()
     }
 
 
-    for (int i = 0; i < num_of_agents; i++) 
+    vector<int> root_order(num_of_agents);
+    std::iota(root_order.begin(), root_order.end(), 0);
+    if (!dummy_start->priorities.empty())
+    {
+        vector<int> lower_nodes(num_of_agents, -1);
+        for (int i = 0; i < num_of_agents; i++)
+            dummy_start->priorities.update_number_of_lower_nodes(lower_nodes, i);
+        std::sort(root_order.begin(), root_order.end(), [&](int lhs, int rhs) {
+            if (lower_nodes[lhs] != lower_nodes[rhs])
+                return lower_nodes[lhs] > lower_nodes[rhs];
+            return lhs < rhs;
+        });
+    }
+
+    for (int i : root_order)
 	{
         if (paths[i] != nullptr)
             continue;
@@ -570,7 +774,6 @@ bool PBS::generate_root_node()
         rt.build(paths, initial_constraints, dummy_start->priorities.get_reachable_nodes(i), i, start_location);
         runtime_get_higher_priority_agents += dummy_start->priorities.runtime;
         runtime_rt += (double)(std::clock() - t) / CLOCKS_PER_SEC;
-        vector< vector<double> > h_values(goal_locations[i].size());
         t = std::clock();
         path = path_planner.run(G, starts[i], goal_locations[i], rt);
 		runtime_plan_paths += (double)(std::clock() - t) / CLOCKS_PER_SEC;
@@ -706,6 +909,10 @@ bool PBS::run(const vector<State>& starts,
         for (auto & i : n)
                 i = new PBSNode();
 	    resolve_conflict(curr->conflict, n[0], n[1]);
+        pair<int, int> preferred_priority(-1, -1);
+        bool biased_branch = prefer_workstation_branch(curr->conflict, preferred_priority);
+        if (biased_branch && n[0]->priority != preferred_priority)
+            std::swap(n[0], n[1]);
 
         // int loc = std::get<2>(*curr->conflict);
         vector<Path*> copy(paths);
@@ -747,7 +954,12 @@ bool PBS::run(const vector<State>& starts,
         {
             if (n[0] != nullptr && n[1] != nullptr)
             {
-                if (n[0]->f_val < n[1]->f_val ||
+                if (biased_branch)
+                {
+                    push_node(n[1]);
+                    push_node(n[0]);
+                }
+                else if (n[0]->f_val < n[1]->f_val ||
                     (n[0]->f_val == n[1]->f_val && n[0]->num_of_collisions < n[1]->num_of_collisions))
                 {
                     push_node(n[1]);

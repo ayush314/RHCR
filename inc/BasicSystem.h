@@ -70,7 +70,7 @@ public:
     void update_paths(const std::vector<Path*>& MAPF_paths, int max_timestep);
     void update_paths(const std::vector<Path>& MAPF_paths, int max_timestep);
     void update_initial_paths(vector<Path>& initial_paths) const;
-    void update_initial_constraints(list< tuple<int, int, int> >& initial_constraints) const;
+    virtual void update_initial_constraints(list< tuple<int, int, int> >& initial_constraints) const;
     
 	void add_partial_priorities(const vector<Path>& initial_paths, PriorityGraph& initial_priorities) const;
 	list<tuple<int, int, int>> move(); // return finished tasks
@@ -88,4 +88,3 @@ protected:
 private:
 	const BasicGraph& G;
 };
-

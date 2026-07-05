@@ -3,6 +3,7 @@
 #include <tuple>
 #include <list>
 #include <vector>
+#include <deque>
 #include <iostream>
 #include <cfloat>
 #include <ctime>

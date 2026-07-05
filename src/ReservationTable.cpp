@@ -15,6 +15,12 @@ void ReservationTable::updateSIT(size_t location)
 
 		if (location < map_size) // vertex
 		{
+            const auto& custom_soft = soft_vertex_ct.find(location);
+            if (custom_soft != soft_vertex_ct.end())
+            {
+                for (auto time_range : custom_soft->second)
+                    insertSoftConstraint2SIT(location, time_range.first, time_range.second);
+            }
 			for (int t = 0; t < (int)cat.size(); t++)
 			{
 				if (cat[t][location])
@@ -197,6 +203,15 @@ void ReservationTable::insertSoftConstraint2SIT(int location, int t_min, int t_m
     }
 }
 
+void ReservationTable::addSoftVertexConstraint(int location, int t_min, int t_max)
+{
+    if (location < 0 || location >= (int)map_size || t_max <= t_min)
+        return;
+    if (G.types[location] == "Magic")
+        return;
+    soft_vertex_ct[location].emplace_back(t_min, t_max);
+}
+
 
 void ReservationTable::insertPath2CT(const Path& path)
 {
@@ -239,6 +254,8 @@ void ReservationTable::insertPath2CT(const Path& path)
 	}
 	if (hold_endpoints && G.types[prev->location] != "Magic")
 		ct[path.back().location].emplace_back(path.back().timestep, INTERVAL_MAX);
+    else if (G.types[path.back().location] == "Workstation")
+        ct[path.back().location].emplace_back(path.back().timestep, window + 1 + k_robust);
 }
 
 void ReservationTable::addInitialConstraints(const list< tuple<int, int, int> >& initial_constraints, int current_agent)
@@ -569,6 +586,19 @@ bool ReservationTable::isConstrained(int curr_id, int next_id, int next_timestep
 
 bool ReservationTable::isConflicting(int curr_id, int next_id, int next_timestep) const
 {
+    if (next_id >= 0 && next_id < (int)map_size)
+    {
+        auto it_soft = soft_vertex_ct.find(next_id);
+        if (it_soft != soft_vertex_ct.end())
+        {
+            for (auto time_range : it_soft->second)
+            {
+                if (next_timestep >= time_range.first && next_timestep < time_range.second)
+                    return true;
+            }
+        }
+    }
+
 	if (next_timestep >= (int)cat.size())
 		return false;
 

@@ -15,8 +15,8 @@ public:
     bool prioritize_start;
     double runtime;
 
-    void clear() {sit.clear(); ct.clear(); cat.clear(); }
-	void copy(const ReservationTable& other) {sit = other.sit; ct = other.ct; cat = other.cat; }
+    void clear() {sit.clear(); ct.clear(); cat.clear(); soft_vertex_ct.clear(); }
+	void copy(const ReservationTable& other) {sit = other.sit; ct = other.ct; cat = other.cat; soft_vertex_ct = other.soft_vertex_ct; }
     void build(const vector<Path*>& paths,
                const list< tuple<int, int, int> >& initial_constraints,
                const unordered_set<int>& high_priority_agents, int current_agent, int start_location);
@@ -42,6 +42,7 @@ public:
 	bool isConflicting(int curr_id, int next_id, int next_timestep) const;
 	int getHoldingTimeFromCT(int location) const;
     set<int> getConstrainedTimesteps(int location) const;
+    void addSoftVertexConstraint(int location, int t_min, int t_max);
 
 	ReservationTable(const BasicGraph& G): G(G) {}
 private:
@@ -50,6 +51,7 @@ private:
 	unordered_map<size_t, list<pair<int, int> > > ct; // location/edge -> time range
 	// Conflict Avoidance Table (CAT)
 	vector<vector<bool> > cat; //  (timestep, location) ->  have conflicts or not
+    unordered_map<size_t, list<pair<int, int> > > soft_vertex_ct; // location -> time range
 	// Safe Interval Table (SIT)
 	unordered_map<size_t, list<Interval > > sit; // location/edge -> [t_min, t_max), num_of_collisions
 

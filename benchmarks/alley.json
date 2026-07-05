@@ -1,0 +1,70 @@
+{
+  "benchmark_id": "alley",
+  "description": "30x8 transfer alley with top-wall pickup endpoints and bottom-wall workstation microzones.",
+  "rows": 8,
+  "cols": 30,
+  "walkable_rows": [0, 7],
+  "walkable_cols": [0, 29],
+  "simulation_time_default": 2000,
+  "planning_window_default": 20,
+  "simulation_window_default": 5,
+  "seed_start_default": 0,
+  "seed_count_default": 20,
+  "service_time_default": 3,
+  "task_model": "endpoint_station_alternating",
+  "restrict_station_zones": false,
+  "pickup_endpoints": [
+    [1, 0], [4, 0], [7, 0], [10, 0], [13, 0],
+    [16, 0], [19, 0], [22, 0], [25, 0], [28, 0]
+  ],
+  "stations": [
+    {
+      "station_id": 0,
+      "workstation_cell": [2, 7],
+      "standby_cells": [[1, 6], [2, 6], [3, 6]],
+      "buffer_cells": [[1, 5], [2, 5], [3, 5]],
+      "approach_cells": [[1, 4], [2, 4], [3, 4]],
+      "exit_cells": [[1, 7], [3, 7]]
+    },
+    {
+      "station_id": 1,
+      "workstation_cell": [7, 7],
+      "standby_cells": [[6, 6], [7, 6], [8, 6]],
+      "buffer_cells": [[6, 5], [7, 5], [8, 5]],
+      "approach_cells": [[6, 4], [7, 4], [8, 4]],
+      "exit_cells": [[6, 7], [8, 7]]
+    },
+    {
+      "station_id": 2,
+      "workstation_cell": [12, 7],
+      "standby_cells": [[11, 6], [12, 6], [13, 6]],
+      "buffer_cells": [[11, 5], [12, 5], [13, 5]],
+      "approach_cells": [[11, 4], [12, 4], [13, 4]],
+      "exit_cells": [[11, 7], [13, 7]]
+    },
+    {
+      "station_id": 3,
+      "workstation_cell": [17, 7],
+      "standby_cells": [[16, 6], [17, 6], [18, 6]],
+      "buffer_cells": [[16, 5], [17, 5], [18, 5]],
+      "approach_cells": [[16, 4], [17, 4], [18, 4]],
+      "exit_cells": [[16, 7], [18, 7]]
+    },
+    {
+      "station_id": 4,
+      "workstation_cell": [22, 7],
+      "standby_cells": [[21, 6], [22, 6], [23, 6]],
+      "buffer_cells": [[21, 5], [22, 5], [23, 5]],
+      "approach_cells": [[21, 4], [22, 4], [23, 4]],
+      "exit_cells": [[21, 7], [23, 7]]
+    },
+    {
+      "station_id": 5,
+      "workstation_cell": [27, 7],
+      "standby_cells": [[26, 6], [27, 6], [28, 6]],
+      "buffer_cells": [[26, 5], [27, 5], [28, 5]],
+      "approach_cells": [[26, 4], [27, 4], [28, 4]],
+      "exit_cells": [[26, 7], [28, 7]]
+    }
+  ]
+}
