@@ -24,6 +24,8 @@ METRICS = [
     "queue_wait_km_p95",
     "active_queue_agents",
     "mean_plan_ms",
+    "plan_runtime_p95_ms",
+    "plan_runtime_max_ms",
     "plan_runtime_slope_ms_per_1000_steps",
     "termination_timestep",
     "terminated_by_traffic_jam",
@@ -44,6 +46,8 @@ PAIRED_METRICS = [
     "service_rate",
     "queue_wait_km_p95",
     "mean_plan_ms",
+    "plan_runtime_p95_ms",
+    "plan_runtime_max_ms",
     "pibt_wait_fallbacks",
     "pibt_wait_fallback_rate_per_1000_agent_steps",
 ]
@@ -84,6 +88,19 @@ def stddev(values: list[float]) -> float:
         return 0.0
     mu = mean(values)
     return math.sqrt(sum((value - mu) ** 2 for value in values) / (len(values) - 1))
+
+
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return float("nan")
+    ordered = sorted(values)
+    rank = (pct / 100.0) * (len(ordered) - 1)
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return ordered[lower]
+    fraction = rank - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
 
 
 def metric_values(entries: list[dict[str, str | int | float]], metric: str) -> list[float]:
@@ -168,6 +185,85 @@ def paired_comparison_rows(
     return output
 
 
+def paired_root_comparison_rows(
+    reference_rows: list[dict[str, str | int | float]],
+    baseline_rows: list[dict[str, str | int | float]],
+    reference_label: str,
+    baseline_label: str,
+) -> list[dict[str, str | int | float]]:
+    def group_rows(
+        rows: list[dict[str, str | int | float]],
+    ) -> dict[tuple[str, int, str], list[dict[str, str | int | float]]]:
+        grouped: dict[tuple[str, int, str], list[dict[str, str | int | float]]] = defaultdict(list)
+        for row in rows:
+            grouped[(str(row["map"]), int(row["agent_count"]), str(row["method"]))].append(row)
+        return grouped
+
+    reference_groups = group_rows(reference_rows)
+    baseline_groups = group_rows(baseline_rows)
+    cells = sorted(
+        reference_groups.keys() & baseline_groups.keys(),
+        key=lambda item: (map_sort_key(item[0]), item[1], method_sort_key(item[2])),
+    )
+    output: list[dict[str, str | int | float]] = []
+    for map_name, agent_count, method in cells:
+        reference_entries = reference_groups[(map_name, agent_count, method)]
+        baseline_entries = baseline_groups[(map_name, agent_count, method)]
+        reference_clean = {
+            int(row["seed"]): row for row in reference_entries if row["status"] == "clean"
+        }
+        baseline_clean = {
+            int(row["seed"]): row for row in baseline_entries if row["status"] == "clean"
+        }
+        paired_seeds = sorted(reference_clean.keys() & baseline_clean.keys())
+        for metric in PAIRED_METRICS:
+            reference_values: list[float] = []
+            baseline_values: list[float] = []
+            for seed in paired_seeds:
+                reference_value = reference_clean[seed].get(metric, "")
+                baseline_value = baseline_clean[seed].get(metric, "")
+                if reference_value == "" or baseline_value == "":
+                    continue
+                reference_float = float(reference_value)
+                baseline_float = float(baseline_value)
+                if metric == "queue_wait_km_p95" and (reference_float < 0 or baseline_float < 0):
+                    continue
+                reference_values.append(reference_float)
+                baseline_values.append(baseline_float)
+            if not reference_values:
+                continue
+            differences = [
+                reference_value - baseline_value
+                for reference_value, baseline_value in zip(reference_values, baseline_values)
+            ]
+            baseline_mean = mean(baseline_values)
+            output.append(
+                {
+                    "map": map_name,
+                    "agent_count": agent_count,
+                    "method": method,
+                    "reference": reference_label,
+                    "baseline": baseline_label,
+                    "metric": metric,
+                    "reference_seed_count": len(reference_entries),
+                    "reference_clean_seed_count": len(reference_clean),
+                    "baseline_seed_count": len(baseline_entries),
+                    "baseline_clean_seed_count": len(baseline_clean),
+                    "paired_seed_count": len(reference_values),
+                    "reference_mean": mean(reference_values),
+                    "baseline_mean": baseline_mean,
+                    "mean_difference": mean(differences),
+                    "relative_difference_percent": (
+                        "" if baseline_mean == 0 else 100 * mean(differences) / baseline_mean
+                    ),
+                    "difference_ci95_halfwidth": (
+                        "" if len(differences) < 2 else ci95_halfwidth(differences)
+                    ),
+                }
+            )
+    return output
+
+
 def read_summary(path: Path) -> dict[str, float | str]:
     with path.open() as fh:
         row = next(csv.DictReader(fh))
@@ -176,6 +272,23 @@ def read_summary(path: Path) -> dict[str, float | str]:
         value = row.get(metric, "")
         metrics[metric] = "" if value == "" else float(value)
     return metrics
+
+
+def backfill_runtime_tail(metrics: dict[str, float | str], runtime_path: Path) -> None:
+    if not runtime_path.exists():
+        return
+    with runtime_path.open() as fh:
+        samples = [
+            float(row["plan_ms"])
+            for row in csv.DictReader(fh)
+            if row.get("plan_ms", "") != ""
+        ]
+    if not samples:
+        return
+    if metrics.get("plan_runtime_p95_ms", "") == "":
+        metrics["plan_runtime_p95_ms"] = percentile(samples, 95)
+    if metrics.get("plan_runtime_max_ms", "") == "":
+        metrics["plan_runtime_max_ms"] = max(samples)
 
 
 def read_status_rows(root: Path) -> list[dict[str, str | int | float]]:
@@ -191,6 +304,10 @@ def read_status_rows(root: Path) -> list[dict[str, str | int | float]]:
                 metrics = read_summary(summary_path)
             except Exception:
                 pass
+        try:
+            backfill_runtime_tail(metrics, status_path.parent / "planning_runtime.csv")
+        except (OSError, KeyError, ValueError):
+            pass
         status = payload["status"]
         failure_reason = payload.get("failure_reason", "")
         termination_failures = (
@@ -275,6 +392,10 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Aggregate workstation comparison results.")
     parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed0to19"))
+    parser.add_argument("--paired-baseline-root")
+    parser.add_argument("--reference-label", default="reference")
+    parser.add_argument("--baseline-label", default="baseline")
+    parser.add_argument("--paired-root-output")
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -393,6 +514,50 @@ def main() -> int:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(paired_rows)
+
+    if args.paired_baseline_root:
+        baseline_root = Path(args.paired_baseline_root)
+        baseline_rows = read_status_rows(baseline_root)
+        if not baseline_rows and (baseline_root / "combined_summary.csv").exists():
+            baseline_rows = read_existing_combined(baseline_root / "combined_summary.csv")
+        if not baseline_rows:
+            raise SystemExit(f"No baseline result rows found under {baseline_root}")
+        baseline_rows = filter_manifest_cells(baseline_rows, baseline_root / "run_manifest.json")
+        derive_fallback_rate(baseline_rows, baseline_root / "run_manifest.json")
+        comparison_rows = paired_root_comparison_rows(
+            combined_rows,
+            baseline_rows,
+            args.reference_label,
+            args.baseline_label,
+        )
+        output_path = (
+            Path(args.paired_root_output)
+            if args.paired_root_output
+            else root / "paired_root_comparison.csv"
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = [
+            "map",
+            "agent_count",
+            "method",
+            "reference",
+            "baseline",
+            "metric",
+            "reference_seed_count",
+            "reference_clean_seed_count",
+            "baseline_seed_count",
+            "baseline_clean_seed_count",
+            "paired_seed_count",
+            "reference_mean",
+            "baseline_mean",
+            "mean_difference",
+            "relative_difference_percent",
+            "difference_ci95_halfwidth",
+        ]
+        with output_path.open("w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(comparison_rows)
 
     return 0
 

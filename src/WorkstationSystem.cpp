@@ -28,6 +28,20 @@ double percentile(std::vector<int> values, double pct)
     return values[lo] * (1.0 - frac) + values[hi] * frac;
 }
 
+double percentile(std::vector<double> values, double pct)
+{
+    if (values.empty())
+        return 0;
+    std::sort(values.begin(), values.end());
+    double rank = (pct / 100.0) * (values.size() - 1);
+    size_t lo = (size_t)std::floor(rank);
+    size_t hi = (size_t)std::ceil(rank);
+    if (lo == hi)
+        return values[lo];
+    double frac = rank - lo;
+    return values[lo] * (1.0 - frac) + values[hi] * frac;
+}
+
 int effective_pressure_threshold(int override_threshold)
 {
     if (override_threshold > 0)
@@ -1078,6 +1092,18 @@ double WorkstationSystem::compute_mean_plan_ms() const
     return sum / mean_plan_ms_samples.size();
 }
 
+double WorkstationSystem::compute_plan_runtime_p95_ms() const
+{
+    return percentile(mean_plan_ms_samples, 95);
+}
+
+double WorkstationSystem::compute_plan_runtime_max_ms() const
+{
+    if (mean_plan_ms_samples.empty())
+        return 0;
+    return *std::max_element(mean_plan_ms_samples.begin(), mean_plan_ms_samples.end());
+}
+
 double WorkstationSystem::compute_plan_runtime_slope() const
 {
     if (mean_plan_ms_samples.size() < 2 ||
@@ -1211,7 +1237,8 @@ void WorkstationSystem::save_results()
 
     output.open(outfile + "/summary.csv", std::ios::out);
     output << "service_rate,queue_wait_p95,queue_wait_km_p95,active_queue_agents,"
-           << "mean_plan_ms,plan_runtime_slope_ms_per_1000_steps,completed_services,"
+           << "mean_plan_ms,plan_runtime_p95_ms,plan_runtime_max_ms,"
+           << "plan_runtime_slope_ms_per_1000_steps,completed_services,"
            << "termination_reason,termination_timestep,terminated_by_traffic_jam,terminated_by_commit_repair_failure,"
            << "terminated_by_solver_failure,"
            << "pressure_active_fraction,pressured_station_fraction,mean_zone_occupancy_fraction,"
@@ -1234,6 +1261,8 @@ void WorkstationSystem::save_results()
            << compute_queue_wait_km_p95() << ","
            << compute_active_queue_agents() << ","
            << compute_mean_plan_ms() << ","
+           << compute_plan_runtime_p95_ms() << ","
+           << compute_plan_runtime_max_ms() << ","
            << compute_plan_runtime_slope() << ","
            << completed_services << ","
            << termination_reason << ","

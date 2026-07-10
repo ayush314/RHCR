@@ -104,5 +104,7 @@ private:
     double compute_queue_wait_km_p95() const;
     int compute_active_queue_agents() const;
     double compute_mean_plan_ms() const;
+    double compute_plan_runtime_p95_ms() const;
+    double compute_plan_runtime_max_ms() const;
     double compute_plan_runtime_slope() const;
 };

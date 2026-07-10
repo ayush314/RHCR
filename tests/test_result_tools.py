@@ -35,6 +35,41 @@ class AggregateResultsTests(unittest.TestCase):
     def test_paired_ci_is_zero_for_identical_differences(self) -> None:
         self.assertEqual(aggregate_results.ci95_halfwidth([2.0, 2.0, 2.0]), 0.0)
 
+    def test_runtime_tail_backfills_legacy_summary(self) -> None:
+        metrics = {"plan_runtime_p95_ms": "", "plan_runtime_max_ms": ""}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path = Path(temp_dir) / "planning_runtime.csv"
+            runtime_path.write_text(
+                "episode,timestep,plan_ms\n"
+                "0,0,1\n"
+                "1,5,2\n"
+                "2,10,10\n"
+            )
+            aggregate_results.backfill_runtime_tail(metrics, runtime_path)
+        self.assertAlmostEqual(metrics["plan_runtime_p95_ms"], 9.2)
+        self.assertEqual(metrics["plan_runtime_max_ms"], 10.0)
+
+    def test_cross_root_comparison_pairs_only_clean_matching_seeds(self) -> None:
+        reference = [
+            {"map": "alley", "agent_count": 20, "method": "pibt_pressure", "seed": 1,
+             "status": "clean", "service_rate": 5.0},
+            {"map": "alley", "agent_count": 20, "method": "pibt_pressure", "seed": 2,
+             "status": "clean", "service_rate": 7.0},
+        ]
+        baseline = [
+            {"map": "alley", "agent_count": 20, "method": "pibt_pressure", "seed": 1,
+             "status": "clean", "service_rate": 3.0},
+            {"map": "alley", "agent_count": 20, "method": "pibt_pressure", "seed": 2,
+             "status": "failed", "service_rate": 4.0},
+        ]
+        rows = aggregate_results.paired_root_comparison_rows(
+            reference, baseline, "front", "no_front"
+        )
+        service = next(row for row in rows if row["metric"] == "service_rate")
+        self.assertEqual(service["paired_seed_count"], 1)
+        self.assertEqual(service["baseline_clean_seed_count"], 1)
+        self.assertEqual(service["mean_difference"], 2.0)
+
     def test_fallback_rate_normalizes_planned_agent_steps(self) -> None:
         rows = [
             {
