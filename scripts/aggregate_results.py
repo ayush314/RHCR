@@ -30,6 +30,8 @@ METRICS = [
     "terminated_by_commit_repair_failure",
     "terminated_by_solver_failure",
     "pressure_active_fraction",
+    "pressured_station_fraction",
+    "mean_zone_occupancy_fraction",
     "traffic_jam_fraction",
     "pibt_inheritance_calls",
     "pibt_backtracks",

@@ -54,6 +54,8 @@ void WorkstationSystem::initialize()
     mean_plan_ms_samples.clear();
     plan_timestep_samples.clear();
     pressure_active_samples.clear();
+    pressured_station_fraction_samples.clear();
+    zone_occupancy_fraction_samples.clear();
     completed_services = 0;
     planning_episodes = 0;
     pressure_active_episodes = 0;
@@ -301,17 +303,27 @@ void WorkstationSystem::record_episode_diagnostics()
 {
     planning_episodes++;
     const int pressure_threshold = effective_pressure_threshold(workstation_pressure_threshold);
-    bool pressure_active = false;
+    int pressured_stations = 0;
+    double occupancy_fraction_sum = 0;
     for (size_t station_id = 0; station_id < G.stations.size(); station_id++)
     {
-        if (station_pressure((int)station_id) >= pressure_threshold)
-        {
-            pressure_active_episodes++;
-            pressure_active = true;
-            break;
-        }
+        int pressure = station_pressure((int)station_id);
+        if (pressure >= pressure_threshold)
+            pressured_stations++;
+        const auto& station = G.stations[station_id];
+        int zone_capacity = std::max(
+            1,
+            (int)station.zone_cells.size() -
+                (station.zone_cells.find(station.workstation) != station.zone_cells.end() ? 1 : 0));
+        occupancy_fraction_sum += static_cast<double>(pressure) / zone_capacity;
     }
+    bool pressure_active = pressured_stations > 0;
+    if (pressure_active)
+        pressure_active_episodes++;
     pressure_active_samples.push_back(pressure_active ? 1 : 0);
+    double station_count = std::max<size_t>(1, G.stations.size());
+    pressured_station_fraction_samples.push_back(pressured_stations / station_count);
+    zone_occupancy_fraction_samples.push_back(occupancy_fraction_sum / station_count);
 }
 
 void WorkstationSystem::seed_fixed_service_paths()
@@ -1202,7 +1214,8 @@ void WorkstationSystem::save_results()
            << "mean_plan_ms,plan_runtime_slope_ms_per_1000_steps,completed_services,"
            << "termination_reason,termination_timestep,terminated_by_traffic_jam,terminated_by_commit_repair_failure,"
            << "terminated_by_solver_failure,"
-           << "pressure_active_fraction,traffic_jam_fraction,"
+           << "pressure_active_fraction,pressured_station_fraction,mean_zone_occupancy_fraction,"
+           << "traffic_jam_fraction,"
            << "pibt_inheritance_calls,pibt_backtracks,pibt_wait_fallbacks,pibt_pressure_rank_changes"
            << ",pibt_regret_updates"
            << std::endl;
@@ -1210,6 +1223,11 @@ void WorkstationSystem::save_results()
         if (planning_episodes == 0)
             return 0.0;
         return static_cast<double>(count) / planning_episodes;
+    };
+    auto sample_mean = [](const vector<double>& values) {
+        if (values.empty())
+            return 0.0;
+        return std::accumulate(values.begin(), values.end(), 0.0) / values.size();
     };
     output << compute_service_rate() << ","
            << compute_queue_wait_p95() << ","
@@ -1224,6 +1242,8 @@ void WorkstationSystem::save_results()
            << (terminated_by_commit_repair_failure ? 1 : 0) << ","
            << (terminated_by_solver_failure ? 1 : 0) << ","
            << episode_fraction(pressure_active_episodes) << ","
+           << sample_mean(pressured_station_fraction_samples) << ","
+           << sample_mean(zone_occupancy_fraction_samples) << ","
            << episode_fraction(traffic_jam_episodes) << ","
            << pibt_inheritance_calls_total << ","
            << pibt_backtracks_total << ","
@@ -1234,13 +1254,16 @@ void WorkstationSystem::save_results()
     output.close();
 
     output.open(outfile + "/planning_runtime.csv", std::ios::out);
-    output << "episode,timestep,plan_ms,pressure_active" << std::endl;
+    output << "episode,timestep,plan_ms,pressure_active,pressured_station_fraction,"
+           << "mean_zone_occupancy_fraction" << std::endl;
     for (size_t i = 0; i < mean_plan_ms_samples.size(); i++)
     {
         output << i << ","
                << plan_timestep_samples[i] << ","
                << mean_plan_ms_samples[i] << ","
-               << pressure_active_samples[i]
+               << pressure_active_samples[i] << ","
+               << pressured_station_fraction_samples[i] << ","
+               << zone_occupancy_fraction_samples[i]
                << std::endl;
     }
     output.close();

@@ -57,6 +57,8 @@ private:
     vector<double> mean_plan_ms_samples;
     vector<int> plan_timestep_samples;
     vector<int> pressure_active_samples;
+    vector<double> pressured_station_fraction_samples;
+    vector<double> zone_occupancy_fraction_samples;
     int completed_services = 0;
     int planning_episodes = 0;
     int pressure_active_episodes = 0;
