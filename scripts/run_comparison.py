@@ -174,6 +174,11 @@ def main() -> int:
     parser.add_argument("--plaza-counts", default="20,30,40,50,60")
     parser.add_argument("--lorr-counts", default="", help="Agent counts for the adapted LoRR warehouse-small benchmark.")
     parser.add_argument(
+        "--lorr-sortation-counts",
+        default="",
+        help="Agent counts for the adapted LoRR sortation-small benchmark.",
+    )
+    parser.add_argument(
         "--methods",
         type=parse_methods,
         default=list(METHODS.keys()),
@@ -209,6 +214,12 @@ def main() -> int:
         grids["lorr_warehouse_small"] = {
             "benchmark": repo_root / "benchmarks" / "lorr" / "warehouse_small.json",
             "counts": lorr_counts,
+        }
+    lorr_sortation_counts = parse_counts(args.lorr_sortation_counts)
+    if lorr_sortation_counts:
+        grids["lorr_sortation_small"] = {
+            "benchmark": repo_root / "benchmarks" / "lorr" / "sortation_small.json",
+            "counts": lorr_sortation_counts,
         }
     for config in grids.values():
         config["benchmark_fingerprints"] = benchmark_fingerprints(config["benchmark"])

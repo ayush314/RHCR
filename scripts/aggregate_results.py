@@ -17,7 +17,7 @@ METHOD_ORDER = [
     "pibt_distance_age",
     "pibt_pressure",
 ]
-MAP_ORDER = ["alley", "plaza", "lorr_warehouse_small"]
+MAP_ORDER = ["alley", "plaza", "lorr_warehouse_small", "lorr_sortation_small"]
 METRICS = [
     "service_rate",
     "queue_wait_p95",

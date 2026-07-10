@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import aggregate_results  # noqa: E402
+import import_lorr_workstation  # noqa: E402
 import run_comparison  # noqa: E402
 
 
@@ -45,6 +46,35 @@ class RunComparisonTests(unittest.TestCase):
             fingerprints = run_comparison.benchmark_fingerprints(benchmark)
         self.assertEqual(set(fingerprints), {"benchmark.json", "layout.map"})
         self.assertTrue(all(len(value) == 64 for value in fingerprints.values()))
+
+
+class LorrAdapterTests(unittest.TestCase):
+    def test_sortation_sidecar_is_reproducible_and_has_expected_capacity(self) -> None:
+        map_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_small.map"
+        sidecar_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_small.json"
+        source_url = (
+            "https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/"
+            "2023%20Competition/Problem%20Generator/script/sortation_small.map"
+        )
+        description = (
+            "LoRR sortation map adapted to alternating storage-pickup and serviced-emitter tasks."
+        )
+        generated = import_lorr_workstation.build_benchmark(
+            map_path,
+            12,
+            source_url,
+            description,
+        )
+        self.assertEqual(generated, json.loads(sidecar_path.read_text()))
+
+        _rows, _cols, grid = import_lorr_workstation.read_movingai_map(map_path)
+        traversable = sum(import_lorr_workstation.traversable(cell) for row in grid for cell in row)
+        reserved = {tuple(cell) for cell in generated["pickup_endpoints"]}
+        for station in generated["stations"]:
+            reserved.add(tuple(station["workstation_cell"]))
+            for field in ("standby_cells", "buffer_cells", "approach_cells", "exit_cells"):
+                reserved.update(tuple(cell) for cell in station[field])
+        self.assertEqual(traversable - len(reserved), 870)
 
 
 if __name__ == "__main__":

@@ -58,19 +58,26 @@ Candidate actions are ranked by remaining-goal distance plus pressure-local term
 
 Each pressured station normally admits up to four target-bound agents. The `thirds` profile contracts that limit from four to three at one-third non-service-zone occupancy and from three to two at two-thirds occupancy. Entering above that soft limit adds a preference cost of `2` by default; it does not prune the move. This balanced setting preserves the high-density throughput gain while preventing the long queues produced by the more aggressive cost of `1`. If recursive assignment cannot produce a valid move, the implementation attempts a deterministic wait repair and records it in `pibt_wait_fallbacks`. This is a safety repair after assignment fails, not PIBT's normal wait action or an additional planner.
 
-The LoRR transfer uses the official 2023 `warehouse_small.map`. The adapter treats LoRR `S` cells as storage pickups and a deterministic spaced subset of `E` cells as serviced workstations. The checked-in sidecar has 342 pickups, 12 workstations, and 783 valid start cells. Regenerate it with:
+The LoRR transfer uses the official 2023 `warehouse_small.map` evaluation map and `sortation_small.map` problem-generator map. The adapter treats LoRR `S` cells as storage pickups and a deterministic spaced subset of `E` cells as serviced workstations. The checked-in warehouse sidecar has 342 pickups, 12 workstations, and 783 valid start cells; the sortation sidecar has 517 pickups, 12 workstations, and 870 valid start cells. Regenerate them with:
 
 ```bash
 python3 scripts/import_lorr_workstation.py \
   --map benchmarks/lorr/warehouse_small.map \
   --output benchmarks/lorr/warehouse_small.json \
   --station-count 12
+
+python3 scripts/import_lorr_workstation.py \
+  --map benchmarks/lorr/sortation_small.map \
+  --output benchmarks/lorr/sortation_small.json \
+  --station-count 12 \
+  --source-url 'https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Problem%20Generator/script/sortation_small.map' \
+  --description 'LoRR sortation map adapted to alternating storage-pickup and serviced-emitter tasks.'
 ```
 
 The main arguments are:
 
 - `scenario`: the simulation scenario. Here it is `WORKSTATION`.
-- `benchmark`: a workstation benchmark JSON (`alley`, `plaza`, or the adapted LoRR warehouse).
+- `benchmark`: a workstation benchmark JSON (`alley`, `plaza`, or either adapted LoRR map).
 - `solver`: the windowed MAPF solver (`PBS` or `PIBT`).
 - `station_policy`: the workstation-local PBS policy (`vanilla`, `distance_age`, or `pressure_aware`).
 - `pibt_policy`: the PIBT policy (`vanilla`, `distance_age`, or `pressure`).
@@ -121,6 +128,22 @@ python3 scripts/run_comparison.py \
   --alley-counts '' \
   --plaza-counts '' \
   --lorr-counts 50,197,343,490,636,783 \
+  --continue-on-traffic-jam
+```
+
+To run the six-point LoRR sortation curve:
+
+```bash
+python3 scripts/run_comparison.py \
+  --root results/pibt_lorr_sortation_small_tau3_h5_seed1to20 \
+  --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
+  --seed-start 1 \
+  --seed-count 20 \
+  --simulation-time 500 \
+  --service-time 3 \
+  --alley-counts '' \
+  --plaza-counts '' \
+  --lorr-sortation-counts 50,214,378,542,706,870 \
   --continue-on-traffic-jam
 ```
 

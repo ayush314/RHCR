@@ -69,7 +69,12 @@ def select_spaced(candidates: list[tuple[int, int]], count: int) -> list[tuple[i
     return sorted(selected, key=lambda cell: (cell[1], cell[0]))
 
 
-def build_benchmark(source: Path, station_count: int) -> dict:
+def build_benchmark(
+    source: Path,
+    station_count: int,
+    source_url: str,
+    description: str,
+) -> dict:
     rows, cols, grid = read_movingai_map(source)
     pickups = [
         (x, y)
@@ -107,8 +112,8 @@ def build_benchmark(source: Path, station_count: int) -> dict:
 
     return {
         "benchmark_id": f"lorr_{source.stem}",
-        "description": "LoRR warehouse map adapted to alternating storage-pickup and serviced-emitter tasks.",
-        "source": "https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Example%20Instances/warehouse.domain",
+        "description": description,
+        "source": source_url,
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "adapter_station_count": station_count,
         "rows": rows,
@@ -132,9 +137,22 @@ def main() -> int:
     parser.add_argument("--map", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--station-count", type=int, default=12)
+    parser.add_argument(
+        "--source-url",
+        default="https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Example%20Instances/warehouse.domain",
+    )
+    parser.add_argument(
+        "--description",
+        default="LoRR warehouse map adapted to alternating storage-pickup and serviced-emitter tasks.",
+    )
     args = parser.parse_args()
 
-    benchmark = build_benchmark(args.map, args.station_count)
+    benchmark = build_benchmark(
+        args.map,
+        args.station_count,
+        args.source_url,
+        args.description,
+    )
     benchmark["movingai_map"] = os.path.relpath(args.map.resolve(), args.output.resolve().parent)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(benchmark, indent=2) + "\n")
