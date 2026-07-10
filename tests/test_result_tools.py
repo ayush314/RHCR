@@ -85,6 +85,15 @@ class AggregateResultsTests(unittest.TestCase):
             aggregate_results.derive_fallback_rate(rows, manifest_path)
         self.assertEqual(rows[0]["pibt_wait_fallback_rate_per_1000_agent_steps"], 1.0)
 
+    def test_legacy_unreached_queue_p95_is_capped_at_run_horizon(self) -> None:
+        rows = [
+            {"queue_wait_km_p95": -1.0, "termination_timestep": 500.0},
+            {"queue_wait_km_p95": 120.0, "termination_timestep": 500.0},
+        ]
+        aggregate_results.cap_legacy_queue_wait_at_horizon(rows)
+        self.assertEqual(rows[0]["queue_wait_km_p95"], 500.0)
+        self.assertEqual(rows[1]["queue_wait_km_p95"], 120.0)
+
 
 class RunComparisonTests(unittest.TestCase):
     def test_reset_run_outputs_removes_append_only_diagnostics(self) -> None:

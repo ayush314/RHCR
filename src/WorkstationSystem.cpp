@@ -1080,8 +1080,8 @@ double WorkstationSystem::compute_queue_wait_km_p95() const
         at_risk -= events + censored;
     }
 
-    // The percentile is beyond the observation horizon when survival stays above 5%.
-    return -1;
+    // Cap waits beyond the observable tail at this run's horizon.
+    return observation_t;
 }
 
 double WorkstationSystem::compute_mean_plan_ms() const

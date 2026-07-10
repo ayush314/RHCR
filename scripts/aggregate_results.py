@@ -110,10 +110,19 @@ def percentile(values: list[float], pct: float) -> float:
 
 
 def metric_values(entries: list[dict[str, str | int | float]], metric: str) -> list[float]:
-    values = [float(row.get(metric, "")) for row in entries if row.get(metric, "") != ""]
-    if metric == "queue_wait_km_p95":
-        values = [value for value in values if value >= 0]
-    return values
+    return [float(row.get(metric, "")) for row in entries if row.get(metric, "") != ""]
+
+
+def cap_legacy_queue_wait_at_horizon(
+    rows: list[dict[str, str | int | float]],
+) -> None:
+    for row in rows:
+        value = row.get("queue_wait_km_p95", "")
+        horizon = row.get("termination_timestep", "")
+        if value == "" or horizon == "":
+            continue
+        if float(value) < 0:
+            row["queue_wait_km_p95"] = float(horizon)
 
 
 def ci95_halfwidth(values: list[float]) -> float:
@@ -160,12 +169,8 @@ def paired_comparison_rows(
                         baseline_value = baseline_by_seed[seed].get(metric, "")
                         if reference_value == "" or baseline_value == "":
                             continue
-                        reference_float = float(reference_value)
-                        baseline_float = float(baseline_value)
-                        if metric == "queue_wait_km_p95" and (reference_float < 0 or baseline_float < 0):
-                            continue
-                        reference_values.append(reference_float)
-                        baseline_values.append(baseline_float)
+                        reference_values.append(float(reference_value))
+                        baseline_values.append(float(baseline_value))
                     if not reference_values:
                         continue
                     differences = [
@@ -230,12 +235,8 @@ def paired_root_comparison_rows(
                 baseline_value = baseline_clean[seed].get(metric, "")
                 if reference_value == "" or baseline_value == "":
                     continue
-                reference_float = float(reference_value)
-                baseline_float = float(baseline_value)
-                if metric == "queue_wait_km_p95" and (reference_float < 0 or baseline_float < 0):
-                    continue
-                reference_values.append(reference_float)
-                baseline_values.append(baseline_float)
+                reference_values.append(float(reference_value))
+                baseline_values.append(float(baseline_value))
             if not reference_values:
                 continue
             differences = [
@@ -417,6 +418,7 @@ def main() -> int:
     if not combined_rows:
         raise SystemExit(f"No result cells under {root} match its run_manifest.json")
     derive_fallback_rate(combined_rows, root / "run_manifest.json")
+    cap_legacy_queue_wait_at_horizon(combined_rows)
 
     combined_rows.sort(
         key=lambda row: (
@@ -530,6 +532,7 @@ def main() -> int:
             raise SystemExit(f"No baseline result rows found under {baseline_root}")
         baseline_rows = filter_manifest_cells(baseline_rows, baseline_root / "run_manifest.json")
         derive_fallback_rate(baseline_rows, baseline_root / "run_manifest.json")
+        cap_legacy_queue_wait_at_horizon(baseline_rows)
         comparison_rows = paired_root_comparison_rows(
             combined_rows,
             baseline_rows,
