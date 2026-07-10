@@ -219,6 +219,31 @@ def read_existing_combined(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(fh))
 
 
+def filter_manifest_cells(
+    rows: list[dict[str, str | int | float]],
+    manifest_path: Path,
+) -> list[dict[str, str | int | float]]:
+    if not manifest_path.exists():
+        return rows
+    manifest = json.loads(manifest_path.read_text())
+    methods = set(manifest.get("methods", []))
+    seeds = {int(seed) for seed in manifest.get("seeds", [])}
+    grids = {
+        str(map_name): {int(count) for count in counts}
+        for map_name, counts in manifest.get("grids", {}).items()
+    }
+    if not methods or not seeds or not grids:
+        return rows
+    return [
+        row
+        for row in rows
+        if str(row["method"]) in methods
+        and int(row["seed"]) in seeds
+        and str(row["map"]) in grids
+        and int(row["agent_count"]) in grids[str(row["map"])]
+    ]
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Aggregate workstation comparison results.")
@@ -234,6 +259,9 @@ def main() -> int:
         write_combined = False
     if not combined_rows:
         raise SystemExit(f"No status.json files or existing combined_summary.csv found under {root}")
+    combined_rows = filter_manifest_cells(combined_rows, root / "run_manifest.json")
+    if not combined_rows:
+        raise SystemExit(f"No result cells under {root} match its run_manifest.json")
 
     combined_rows.sort(
         key=lambda row: (

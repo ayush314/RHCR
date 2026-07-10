@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
+import os
+import platform
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +56,24 @@ def load_status(path: Path) -> dict | None:
 
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def benchmark_fingerprints(path: Path) -> dict[str, str]:
+    fingerprints = {path.name: sha256_file(path)}
+    payload = json.loads(path.read_text())
+    movingai_map = payload.get("movingai_map")
+    if movingai_map:
+        dependency = path.parent / str(movingai_map)
+        fingerprints[dependency.name] = sha256_file(dependency)
+    return fingerprints
 
 
 def classify_run(log_path: Path, summary_path: Path, return_code: int, timed_out: bool) -> tuple[str, str]:
@@ -170,6 +191,7 @@ def main() -> int:
     binary = Path(args.binary)
     if not binary.exists():
         raise SystemExit(f"Missing binary: {binary}")
+    binary_sha256 = sha256_file(binary)
 
     seeds = args.seed_list if args.seed_list is not None else list(range(args.seed_start, args.seed_start + args.seed_count))
     grids = {
@@ -188,6 +210,8 @@ def main() -> int:
             "benchmark": repo_root / "benchmarks" / "lorr" / "warehouse_small.json",
             "counts": lorr_counts,
         }
+    for config in grids.values():
+        config["benchmark_fingerprints"] = benchmark_fingerprints(config["benchmark"])
     invalid_plaza_counts = plaza_counts_below_floor(grids["plaza"]["counts"])
     if invalid_plaza_counts:
         parser.error(
@@ -223,7 +247,16 @@ def main() -> int:
             "continue_on_traffic_jam": args.continue_on_traffic_jam,
             "cutoff_time": args.cutoff_time,
             "process_timeout": args.process_timeout,
+            "jobs": args.jobs,
+            "screen": args.screen,
             "keep_paths": args.keep_paths,
+            "platform": platform.platform(),
+            "logical_cpu_count": os.cpu_count(),
+            "binary": str(binary.resolve()),
+            "binary_sha256": binary_sha256,
+            "benchmark_fingerprints": {
+                name: config["benchmark_fingerprints"] for name, config in grids.items()
+            },
             "grids": {name: cfg["counts"] for name, cfg in grids.items()},
         },
     )
@@ -240,16 +273,61 @@ def main() -> int:
         status_path = cell_dir / "status.json"
         summary_path = cell_dir / "summary.csv"
         log_path = cell_dir / "run.log"
+        method_config = METHODS[method_name]
+        run_signature = {
+            "binary_sha256": binary_sha256,
+            "benchmark_fingerprints": grids[map_name]["benchmark_fingerprints"],
+            "map": map_name,
+            "agent_count": agent_count,
+            "method": method_name,
+            "seed": seed,
+            "solver": method_config["solver"],
+            "station_policy": method_config.get("station_policy", "vanilla"),
+            "pibt_policy": method_config.get("pibt_policy", ""),
+            "simulation_time": args.simulation_time,
+            "planning_window": args.planning_window,
+            "simulation_window": args.simulation_window,
+            "service_time": args.service_time,
+            "pressure_threshold": args.pressure_threshold,
+            "cutoff_time": args.cutoff_time,
+            "process_timeout": args.process_timeout,
+            "batch_jobs": args.jobs,
+            "continue_on_traffic_jam": args.continue_on_traffic_jam,
+        }
+        if "pibt_policy" in method_config:
+            run_signature.update(
+                {
+                    "pibt_pressure_entry_penalty": args.pibt_pressure_entry_penalty,
+                    "pibt_pressure_inbound_limit": args.pibt_pressure_inbound_limit,
+                    "pibt_pressure_profile": args.pibt_pressure_profile,
+                    "pibt_wait_penalty": args.pibt_wait_penalty,
+                    "pibt_exit_bonus": args.pibt_exit_bonus,
+                    "pibt_front_bonus": args.pibt_front_bonus,
+                    "pibt_soft_collision_penalty": args.pibt_soft_collision_penalty,
+                    "pibt_hindrance": args.pibt_hindrance,
+                    "pibt_hindrance_scope": args.pibt_hindrance_scope,
+                    "pibt_regret_iterations": args.pibt_regret_iterations,
+                    "pibt_regret_weight": args.pibt_regret_weight,
+                    "pibt_regret_scope": args.pibt_regret_scope,
+                    "pibt_random_tiebreak": args.pibt_random_tiebreak,
+                    "pibt_front_priority": not args.no_pibt_front_priority,
+                    "pibt_phase_priority": not args.no_pibt_phase_priority,
+                }
+            )
 
         existing = load_status(status_path)
-        if existing and not args.force and existing.get("status") in {"clean", "failed"}:
+        if (
+            existing
+            and not args.force
+            and existing.get("status") in {"clean", "failed"}
+            and existing.get("run_signature") == run_signature
+        ):
             if existing.get("status") == "clean" and not args.keep_paths:
                 (cell_dir / "paths.txt").unlink(missing_ok=True)
             log(f"[reuse] {map_name} {agent_count} {method_name} seed {seed}")
             return
 
         cell_dir.mkdir(parents=True, exist_ok=True)
-        method_config = METHODS[method_name]
         cmd = [
             str(binary),
             "--scenario", "WORKSTATION",
@@ -318,6 +396,7 @@ def main() -> int:
                 "status": status,
                 "failure_reason": failure_reason,
                 "return_code": return_code,
+                "run_signature": run_signature,
                 "output_dir": str(cell_dir),
             },
         )

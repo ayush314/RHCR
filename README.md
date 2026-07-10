@@ -50,7 +50,7 @@ The scalable PIBT comparison uses:
   --seed 1
 ```
 
-Pressure PIBT is a preference-construction extension of a shared PIBT core. The three reportable methods are `vanilla`, `distance_age`, and `pressure`. They use the same recursive one-step assignment, dynamic priority ages, workstation simulator, and seeded random final preference tie.
+Pressure PIBT is a preference-construction extension of a shared PIBT core. The three reportable methods are `vanilla`, `distance_age`, and `pressure`. They use the same recursive one-step assignment, dynamic priority ages, workstation simulator, and seeded random final preference tie. PIBT is scalable but not a complete MAPF solver; `clean` results here are empirical horizon completions, not a completeness claim.
 
 Pressure PIBT keeps the dynamic priority order instead of globally reordering service and exit phases. Its one ordering intervention boosts the primary front runner at each pressured station, chosen by boundary-entry time, distance, task-issue time, and agent ID.
 
@@ -112,10 +112,10 @@ To run the six-point LoRR capacity curve:
 
 ```bash
 python3 scripts/run_comparison.py \
-  --root results/pibt_lorr_warehouse_small_tau3_h5_seed1to10 \
+  --root results/pibt_lorr_warehouse_small_tau3_h5_seed1to20 \
   --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
   --seed-start 1 \
-  --seed-count 10 \
+  --seed-count 20 \
   --simulation-time 500 \
   --service-time 3 \
   --alley-counts '' \
@@ -131,7 +131,7 @@ python3 scripts/aggregate_results.py \
   --root results/pibt_primary_random_preference_h5_seed1to20
 ```
 
-Each run writes `summary.csv` and per-replan `planning_runtime.csv`. The summary includes completed-wait `queue_wait_p95`, Kaplan-Meier right-censor-aware `queue_wait_km_p95`, and the number of still-waiting agents at the horizon in `active_queue_agents`. Aggregation produces `combined_summary.csv`, `aggregate.csv`, and same-seed pressure-vs-baseline effects with 95% confidence intervals in `paired_comparison.csv`. Batch runs remove large `paths.txt` trajectories after clean runs by default; pass `--keep-paths` only when a trajectory-level diagnosis needs them. The automated candidate search is in `scripts/auto_research_pibt.py`; rejected configurations and leaderboards belong under `results/_archive` rather than in the primary comparison.
+Each run writes `summary.csv` and per-replan `planning_runtime.csv`. The summary includes completed-wait `queue_wait_p95`, Kaplan-Meier right-censor-aware `queue_wait_km_p95`, and the number of still-waiting agents at the horizon in `active_queue_agents`. Aggregation produces `combined_summary.csv`, `aggregate.csv`, and same-seed pressure-vs-baseline effects with 95% confidence intervals in `paired_comparison.csv`. Batch manifests fingerprint the binary and benchmark inputs, status files fingerprint each run configuration, and aggregation admits only cells selected by the current manifest. Batch runs also remove large `paths.txt` trajectories after clean runs by default; pass `--keep-paths` only when a trajectory-level diagnosis needs them. The automated candidate search is in `scripts/auto_research_pibt.py`; rejected configurations and leaderboards belong under `results/_archive` rather than in the primary comparison.
 
 References:
 
