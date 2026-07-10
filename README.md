@@ -157,6 +157,23 @@ python3 scripts/run_comparison.py \
   --continue-on-traffic-jam
 ```
 
+To run the six-point thousand-agent Sortation Medium curve:
+
+```bash
+python3 scripts/run_comparison.py \
+  --root results/pibt_lorr_sortation_medium_tau3_h5_seed1to10 \
+  --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
+  --seed-start 1 \
+  --seed-count 10 \
+  --simulation-time 500 \
+  --service-time 3 \
+  --alley-counts '' \
+  --plaza-counts '' \
+  --lorr-sortation-medium-counts 1000,2800,4600,6400,8200,10000 \
+  --continue-on-traffic-jam \
+  --jobs 12
+```
+
 To aggregate the results:
 
 ```bash
