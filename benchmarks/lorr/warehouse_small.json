@@ -1,7 +1,7 @@
 {
   "benchmark_id": "lorr_warehouse_small",
   "description": "LoRR warehouse map adapted to alternating storage-pickup and serviced-emitter tasks.",
-  "source": "https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Example%20Instances/warehouse.domain",
+  "source": "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/2023%20Competition/Example%20Instances/warehouse.domain/maps/warehouse_small.map",
   "source_sha256": "8b7e0c65f0c38c49c742278ae35123f1c3f02d5069ca22a560fe199bd8c8d1ad",
   "adapter_station_count": 12,
   "rows": 33,

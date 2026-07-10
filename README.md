@@ -72,7 +72,7 @@ python3 scripts/import_lorr_workstation.py \
   --map benchmarks/lorr/sortation_small.map \
   --output benchmarks/lorr/sortation_small.json \
   --station-count 12 \
-  --source-url 'https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Problem%20Generator/script/sortation_small.map' \
+  --source-url 'https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/2023%20Competition/Problem%20Generator/script/sortation_small.map' \
   --description 'LoRR sortation map adapted to alternating storage-pickup and serviced-emitter tasks.'
 
 python3 scripts/import_lorr_workstation.py \

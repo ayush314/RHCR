@@ -144,7 +144,7 @@ class LorrAdapterTests(unittest.TestCase):
         map_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_small.map"
         sidecar_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_small.json"
         source_url = (
-            "https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/"
+            "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/"
             "2023%20Competition/Problem%20Generator/script/sortation_small.map"
         )
         description = (

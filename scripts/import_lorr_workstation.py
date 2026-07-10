@@ -158,7 +158,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--source-url",
-        default="https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Example%20Instances/warehouse.domain",
+        default=(
+            "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/"
+            "2023%20Competition/Example%20Instances/warehouse.domain/maps/warehouse_small.map"
+        ),
     )
     parser.add_argument(
         "--description",

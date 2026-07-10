@@ -1,7 +1,7 @@
 {
   "benchmark_id": "lorr_sortation_small",
   "description": "LoRR sortation map adapted to alternating storage-pickup and serviced-emitter tasks.",
-  "source": "https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Problem%20Generator/script/sortation_small.map",
+  "source": "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/2023%20Competition/Problem%20Generator/script/sortation_small.map",
   "source_sha256": "686d810cf2eb8cab83894af390eb5c5d0f2960b8c84e52176841583740a3c96f",
   "adapter_station_count": 12,
   "rows": 33,
