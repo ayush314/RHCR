@@ -21,6 +21,13 @@ METHODS = {
     "pibt_distance_age": {"solver": "PIBT", "pibt_policy": "distance_age"},
     "pibt_pressure": {"solver": "PIBT", "pibt_policy": "pressure"},
 }
+RUN_OUTPUT_FILES = (
+    "config.txt",
+    "paths.txt",
+    "planning_runtime.csv",
+    "solver.csv",
+    "summary.csv",
+)
 
 
 def parse_counts(value: str) -> list[int]:
@@ -56,6 +63,11 @@ def load_status(path: Path) -> dict | None:
 
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def reset_run_outputs(cell_dir: Path) -> None:
+    for name in RUN_OUTPUT_FILES:
+        (cell_dir / name).unlink(missing_ok=True)
 
 
 def sha256_file(path: Path) -> str:
@@ -350,6 +362,27 @@ def main() -> int:
             return
 
         cell_dir.mkdir(parents=True, exist_ok=True)
+        reset_run_outputs(cell_dir)
+        status_base = {
+            "map": map_name,
+            "agent_count": agent_count,
+            "method": method_name,
+            "solver": method_config["solver"],
+            "station_policy": method_config.get("station_policy", ""),
+            "pibt_policy": method_config.get("pibt_policy", ""),
+            "seed": seed,
+            "run_signature": run_signature,
+            "output_dir": str(cell_dir),
+        }
+        write_json(
+            status_path,
+            {
+                **status_base,
+                "status": "running",
+                "failure_reason": "",
+                "return_code": None,
+            },
+        )
         cmd = [
             str(binary),
             "--scenario", "WORKSTATION",
@@ -408,18 +441,10 @@ def main() -> int:
         write_json(
             status_path,
             {
-                "map": map_name,
-                "agent_count": agent_count,
-                "method": method_name,
-                "solver": method_config["solver"],
-                "station_policy": method_config.get("station_policy", ""),
-                "pibt_policy": method_config.get("pibt_policy", ""),
-                "seed": seed,
+                **status_base,
                 "status": status,
                 "failure_reason": failure_reason,
                 "return_code": return_code,
-                "run_signature": run_signature,
-                "output_dir": str(cell_dir),
             },
         )
         if status == "clean" and not args.keep_paths:

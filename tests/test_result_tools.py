@@ -87,6 +87,17 @@ class AggregateResultsTests(unittest.TestCase):
 
 
 class RunComparisonTests(unittest.TestCase):
+    def test_reset_run_outputs_removes_append_only_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cell_dir = Path(temp_dir)
+            for name in run_comparison.RUN_OUTPUT_FILES:
+                (cell_dir / name).write_text("stale")
+            keep = cell_dir / "notes.txt"
+            keep.write_text("keep")
+            run_comparison.reset_run_outputs(cell_dir)
+            self.assertTrue(keep.exists())
+            self.assertFalse(any((cell_dir / name).exists() for name in run_comparison.RUN_OUTPUT_FILES))
+
     def test_benchmark_fingerprint_includes_movingai_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
