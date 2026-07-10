@@ -137,6 +137,7 @@ private:
     bool has_edge_swap(int agent,
                        const State& candidate,
                        const vector<State>& current_states,
+                       const vector<int>& current_occupant,
                        const vector<State>& next_states,
                        const vector<bool>& assigned) const;
     bool assign_agent(int agent,
@@ -147,8 +148,15 @@ private:
                       vector<int>& next_occupant,
                       vector<bool>& assigned,
                       vector<bool>& visiting,
+                      vector<int>& assignment_log,
                       int forbidden_next_loc,
                       double& propagated_regret);
+    void rollback_assignments(size_t checkpoint,
+                              const vector<State>& current_states,
+                              vector<State>& next_states,
+                              vector<int>& next_occupant,
+                              vector<bool>& assigned,
+                              vector<int>& assignment_log) const;
     bool force_wait(int agent,
                     int local_t,
                     const vector<State>& current_states,

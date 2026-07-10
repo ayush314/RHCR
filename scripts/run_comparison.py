@@ -179,6 +179,11 @@ def main() -> int:
         help="Agent counts for the adapted LoRR sortation-small benchmark.",
     )
     parser.add_argument(
+        "--lorr-sortation-medium-counts",
+        default="",
+        help="Agent counts for the adapted LoRR sortation-medium scaling benchmark.",
+    )
+    parser.add_argument(
         "--methods",
         type=parse_methods,
         default=list(METHODS.keys()),
@@ -220,6 +225,12 @@ def main() -> int:
         grids["lorr_sortation_small"] = {
             "benchmark": repo_root / "benchmarks" / "lorr" / "sortation_small.json",
             "counts": lorr_sortation_counts,
+        }
+    lorr_sortation_medium_counts = parse_counts(args.lorr_sortation_medium_counts)
+    if lorr_sortation_medium_counts:
+        grids["lorr_sortation_medium"] = {
+            "benchmark": repo_root / "benchmarks" / "lorr" / "sortation_medium.json",
+            "counts": lorr_sortation_medium_counts,
         }
     for config in grids.values():
         config["benchmark_fingerprints"] = benchmark_fingerprints(config["benchmark"])

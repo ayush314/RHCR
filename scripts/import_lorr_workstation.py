@@ -55,17 +55,25 @@ def select_spaced(candidates: list[tuple[int, int]], count: int) -> list[tuple[i
         raise ValueError(f"station count must be between 1 and {len(candidates)}")
     selected = [min(candidates)]
     remaining = set(candidates) - set(selected)
+    nearest_distance = {
+        cell: abs(cell[0] - selected[0][0]) + abs(cell[1] - selected[0][1])
+        for cell in remaining
+    }
     while len(selected) < count:
         nxt = max(
             remaining,
             key=lambda cell: (
-                min(abs(cell[0] - other[0]) + abs(cell[1] - other[1]) for other in selected),
+                nearest_distance[cell],
                 -cell[1],
                 -cell[0],
             ),
         )
         selected.append(nxt)
         remaining.remove(nxt)
+        nearest_distance.pop(nxt)
+        for cell in remaining:
+            distance = abs(cell[0] - nxt[0]) + abs(cell[1] - nxt[1])
+            nearest_distance[cell] = min(nearest_distance[cell], distance)
     return sorted(selected, key=lambda cell: (cell[1], cell[0]))
 
 
@@ -74,6 +82,7 @@ def build_benchmark(
     station_count: int,
     source_url: str,
     description: str,
+    pickup_count: int | None = None,
 ) -> dict:
     rows, cols, grid = read_movingai_map(source)
     pickups = [
@@ -88,6 +97,8 @@ def build_benchmark(
         for x, cell in enumerate(row)
         if cell == "E"
     ]
+    if pickup_count is not None:
+        pickups = select_spaced(pickups, pickup_count)
     workstations = select_spaced(emitters, station_count)
     stations = []
     claimed = set(workstations)
@@ -110,7 +121,7 @@ def build_benchmark(
             "exit_cells": [list(cell) for cell in exits],
         })
 
-    return {
+    benchmark = {
         "benchmark_id": f"lorr_{source.stem}",
         "description": description,
         "source": source_url,
@@ -130,6 +141,9 @@ def build_benchmark(
         "pickup_endpoints": [list(cell) for cell in pickups],
         "stations": stations,
     }
+    if pickup_count is not None:
+        benchmark["adapter_pickup_count"] = pickup_count
+    return benchmark
 
 
 def main() -> int:
@@ -137,6 +151,11 @@ def main() -> int:
     parser.add_argument("--map", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--station-count", type=int, default=12)
+    parser.add_argument(
+        "--pickup-count",
+        type=int,
+        help="Deterministically select this many spaced S cells instead of using every pickup.",
+    )
     parser.add_argument(
         "--source-url",
         default="https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Example%20Instances/warehouse.domain",
@@ -152,6 +171,7 @@ def main() -> int:
         args.station_count,
         args.source_url,
         args.description,
+        args.pickup_count,
     )
     benchmark["movingai_map"] = os.path.relpath(args.map.resolve(), args.output.resolve().parent)
     args.output.parent.mkdir(parents=True, exist_ok=True)

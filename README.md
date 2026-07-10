@@ -52,13 +52,15 @@ The scalable PIBT comparison uses:
 
 Pressure PIBT is a preference-construction extension of a shared PIBT core. The three reportable methods are `vanilla`, `distance_age`, and `pressure`. They use the same recursive one-step assignment, dynamic priority ages, workstation simulator, and seeded random final preference tie. PIBT is scalable but not a complete MAPF solver; `clean` results here are empirical horizon completions, not a completeness claim.
 
+The shared core uses transactional rollback for recursive inheritance and occupancy-indexed vertex/edge validation. These implementation changes preserve candidate order and exact trajectories while avoiding full-state copies and pairwise collision scans at every recursive attempt.
+
 Pressure PIBT keeps the dynamic priority order instead of globally reordering service and exit phases. Its one ordering intervention boosts the primary front runner at each pressured station, chosen by boundary-entry time, distance, task-issue time, and agent ID.
 
 Candidate actions are ranked by remaining-goal distance plus pressure-local terms for pressured-zone entry, front-runner progress, exit progress, and waiting. A lightweight hindrance value, based on the preference construction of Okumura et al., breaks ties only during inherited PIBT calls. Pressure changes candidate order but never removes an otherwise valid action; vertex and edge-swap constraints remain hard constraints.
 
 Each pressured station normally admits up to four target-bound agents. The `thirds` profile contracts that limit from four to three at one-third non-service-zone occupancy and from three to two at two-thirds occupancy. Entering above that soft limit adds a preference cost of `2` by default; it does not prune the move. This balanced setting preserves the high-density throughput gain while preventing the long queues produced by the more aggressive cost of `1`. If recursive assignment cannot produce a valid move, the implementation attempts a deterministic wait repair and records it in `pibt_wait_fallbacks`. This is a safety repair after assignment fails, not PIBT's normal wait action or an additional planner.
 
-The LoRR transfer uses the official 2023 `warehouse_small.map` evaluation map and `sortation_small.map` problem-generator map. The adapter treats LoRR `S` cells as storage pickups and a deterministic spaced subset of `E` cells as serviced workstations. The checked-in warehouse sidecar has 342 pickups, 12 workstations, and 783 valid start cells; the sortation sidecar has 517 pickups, 12 workstations, and 870 valid start cells. Sortation uses the same pressure parameters fixed on the earlier maps, with no map-specific retuning. Regenerate the sidecars with:
+The LoRR transfer uses the official 2023 `warehouse_small.map` evaluation map and `sortation_small.map`/`sortation_medium.map` problem-generator maps. The adapter treats LoRR `S` cells as storage pickups and a deterministic spaced subset of `E` cells as serviced workstations. The checked-in small sidecars have 342/517 pickups, 12 workstations, and 783/870 valid start cells. The medium scaling sidecar deterministically samples 512 of its 12,096 storage cells, uses 24 workstations, and leaves 21,030 valid starts; pickup sampling bounds heuristic memory without changing the map geometry. All Sortation runs use the same pressure parameters fixed on the earlier maps, with no map-specific retuning. Regenerate the sidecars with:
 
 ```bash
 python3 scripts/import_lorr_workstation.py \
@@ -72,12 +74,20 @@ python3 scripts/import_lorr_workstation.py \
   --station-count 12 \
   --source-url 'https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition/Problem%20Generator/script/sortation_small.map' \
   --description 'LoRR sortation map adapted to alternating storage-pickup and serviced-emitter tasks.'
+
+python3 scripts/import_lorr_workstation.py \
+  --map benchmarks/lorr/sortation_medium.map \
+  --output benchmarks/lorr/sortation_medium.json \
+  --station-count 24 \
+  --pickup-count 512 \
+  --source-url 'https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/2023%20Competition/Problem%20Generator/script/sortation_medium.map' \
+  --description 'LoRR medium sortation map adapted to alternating spaced storage-pickup and serviced-emitter tasks for thousand-agent scaling.'
 ```
 
 The main arguments are:
 
 - `scenario`: the simulation scenario. Here it is `WORKSTATION`.
-- `benchmark`: a workstation benchmark JSON (`alley`, `plaza`, or either adapted LoRR map).
+- `benchmark`: a workstation benchmark JSON (`alley`, `plaza`, or an adapted LoRR map).
 - `solver`: the windowed MAPF solver (`PBS` or `PIBT`).
 - `station_policy`: the workstation-local PBS policy (`vanilla`, `distance_age`, or `pressure_aware`).
 - `pibt_policy`: the PIBT policy (`vanilla`, `distance_age`, or `pressure`).

@@ -99,6 +99,27 @@ class RunComparisonTests(unittest.TestCase):
 
 
 class LorrAdapterTests(unittest.TestCase):
+    def test_spaced_selection_matches_reference_farthest_point_rule(self) -> None:
+        candidates = [(x, y) for y in range(4) for x in range(7)]
+        expected = [min(candidates)]
+        remaining = set(candidates) - set(expected)
+        while len(expected) < 8:
+            selected = max(
+                remaining,
+                key=lambda cell: (
+                    min(
+                        abs(cell[0] - other[0]) + abs(cell[1] - other[1])
+                        for other in expected
+                    ),
+                    -cell[1],
+                    -cell[0],
+                ),
+            )
+            expected.append(selected)
+            remaining.remove(selected)
+        expected.sort(key=lambda cell: (cell[1], cell[0]))
+        self.assertEqual(import_lorr_workstation.select_spaced(candidates, 8), expected)
+
     def test_sortation_sidecar_is_reproducible_and_has_expected_capacity(self) -> None:
         map_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_small.map"
         sidecar_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_small.json"
@@ -125,6 +146,35 @@ class LorrAdapterTests(unittest.TestCase):
             for field in ("standby_cells", "buffer_cells", "approach_cells", "exit_cells"):
                 reserved.update(tuple(cell) for cell in station[field])
         self.assertEqual(traversable - len(reserved), 870)
+
+    def test_sortation_medium_sidecar_is_reproducible_and_has_expected_capacity(self) -> None:
+        map_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_medium.map"
+        sidecar_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_medium.json"
+        source_url = (
+            "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/"
+            "2023%20Competition/Problem%20Generator/script/sortation_medium.map"
+        )
+        description = (
+            "LoRR medium sortation map adapted to alternating spaced storage-pickup and "
+            "serviced-emitter tasks for thousand-agent scaling."
+        )
+        generated = import_lorr_workstation.build_benchmark(
+            map_path,
+            24,
+            source_url,
+            description,
+            512,
+        )
+        self.assertEqual(generated, json.loads(sidecar_path.read_text()))
+
+        _rows, _cols, grid = import_lorr_workstation.read_movingai_map(map_path)
+        traversable = sum(import_lorr_workstation.traversable(cell) for row in grid for cell in row)
+        reserved = {tuple(cell) for cell in generated["pickup_endpoints"]}
+        for station in generated["stations"]:
+            reserved.add(tuple(station["workstation_cell"]))
+            for field in ("standby_cells", "buffer_cells", "approach_cells", "exit_cells"):
+                reserved.update(tuple(cell) for cell in station[field])
+        self.assertEqual(traversable - len(reserved), 21030)
 
 
 if __name__ == "__main__":

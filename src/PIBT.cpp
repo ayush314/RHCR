@@ -716,22 +716,17 @@ bool PIBT::violates_initial_constraint(int agent, int loc, int local_t) const
 bool PIBT::has_edge_swap(int agent,
                          const State& candidate,
                          const vector<State>& current_states,
+                         const vector<int>& current_occupant,
                          const vector<State>& next_states,
                          const vector<bool>& assigned) const
 {
     if (candidate.location == current_states[agent].location)
         return false;
-    for (int other = 0; other < num_of_agents; other++)
-    {
-        if (other == agent || !assigned[other])
-            continue;
-        if (current_states[other].location == candidate.location &&
-            next_states[other].location == current_states[agent].location)
-        {
-            return true;
-        }
-    }
-    return false;
+    if (candidate.location < 0 || candidate.location >= (int)current_occupant.size())
+        return true;
+    int other = current_occupant[candidate.location];
+    return other >= 0 && other != agent && assigned[other] &&
+           next_states[other].location == current_states[agent].location;
 }
 
 bool PIBT::assign_agent(int agent,
@@ -742,6 +737,7 @@ bool PIBT::assign_agent(int agent,
                         vector<int>& next_occupant,
                         vector<bool>& assigned,
                         vector<bool>& visiting,
+                        vector<int>& assignment_log,
                         int forbidden_next_loc,
                         double& propagated_regret)
 {
@@ -769,10 +765,7 @@ bool PIBT::assign_agent(int agent,
         if (violates_initial_constraint(agent, candidate.loc, local_t))
             continue;
 
-        vector<State> saved_next_states = next_states;
-        vector<int> saved_next_occupant = next_occupant;
-        vector<bool> saved_assigned = assigned;
-        vector<bool> saved_visiting = visiting;
+        const size_t assignment_checkpoint = assignment_log.size();
         double inherited_regret = 0;
 
         int occupant = candidate.loc < (int)current_occupant.size() ? current_occupant[candidate.loc] : -1;
@@ -781,33 +774,32 @@ bool PIBT::assign_agent(int agent,
             inheritance_calls++;
             bool inherited_valid = assign_agent(
                 occupant, local_t, current_states, current_occupant,
-                next_states, next_occupant, assigned, visiting, candidate.loc,
-                inherited_regret);
+                next_states, next_occupant, assigned, visiting, assignment_log,
+                candidate.loc, inherited_regret);
             update_regret(agent, candidate.loc, inherited_regret);
             if (!inherited_valid)
             {
-                next_states = saved_next_states;
-                next_occupant = saved_next_occupant;
-                assigned = saved_assigned;
-                visiting = saved_visiting;
+                rollback_assignments(
+                    assignment_checkpoint, current_states, next_states,
+                    next_occupant, assigned, assignment_log);
                 continue;
             }
         }
 
         if (next_occupant[candidate.loc] >= 0)
         {
-            next_states = saved_next_states;
-            next_occupant = saved_next_occupant;
-            assigned = saved_assigned;
-            visiting = saved_visiting;
+            rollback_assignments(
+                assignment_checkpoint, current_states, next_states,
+                next_occupant, assigned, assignment_log);
             continue;
         }
-        if (has_edge_swap(agent, candidate.state, current_states, next_states, assigned))
+        if (has_edge_swap(
+                agent, candidate.state, current_states, current_occupant,
+                next_states, assigned))
         {
-            next_states = saved_next_states;
-            next_occupant = saved_next_occupant;
-            assigned = saved_assigned;
-            visiting = saved_visiting;
+            rollback_assignments(
+                assignment_checkpoint, current_states, next_states,
+                next_occupant, assigned, assignment_log);
             continue;
         }
 
@@ -815,6 +807,7 @@ bool PIBT::assign_agent(int agent,
         next_states[agent].timestep = local_t;
         assigned[agent] = true;
         next_occupant[candidate.loc] = agent;
+        assignment_log.push_back(agent);
         visiting[agent] = false;
         propagated_regret = inherited_regret + self_regret(candidates, candidate.loc);
         return true;
@@ -824,6 +817,25 @@ bool PIBT::assign_agent(int agent,
     backtracks++;
     propagated_regret = self_regret(candidates, current_states[agent].location);
     return false;
+}
+
+void PIBT::rollback_assignments(size_t checkpoint,
+                                const vector<State>& current_states,
+                                vector<State>& next_states,
+                                vector<int>& next_occupant,
+                                vector<bool>& assigned,
+                                vector<int>& assignment_log) const
+{
+    while (assignment_log.size() > checkpoint)
+    {
+        int agent = assignment_log.back();
+        assignment_log.pop_back();
+        int loc = next_states[agent].location;
+        if (loc >= 0 && loc < (int)next_occupant.size() && next_occupant[loc] == agent)
+            next_occupant[loc] = -1;
+        next_states[agent] = current_states[agent];
+        assigned[agent] = false;
+    }
 }
 
 bool PIBT::force_wait(int agent,
@@ -849,19 +861,29 @@ bool PIBT::force_wait(int agent,
 bool PIBT::validate_step(const vector<State>& current_states,
                          const vector<State>& next_states) const
 {
-    for (int a1 = 0; a1 < num_of_agents; a1++)
+    vector<int> current_occupant(G.size(), -1);
+    vector<int> next_occupant(G.size(), -1);
+    for (int agent = 0; agent < num_of_agents; agent++)
     {
-        for (int a2 = a1 + 1; a2 < num_of_agents; a2++)
-        {
-            if (next_states[a1].location == next_states[a2].location)
-                return false;
-            if (current_states[a1].location == next_states[a2].location &&
-                current_states[a2].location == next_states[a1].location &&
-                current_states[a1].location != current_states[a2].location)
-            {
-                return false;
-            }
-        }
+        int current_loc = current_states[agent].location;
+        int next_loc = next_states[agent].location;
+        if (current_loc < 0 || current_loc >= (int)current_occupant.size() ||
+            next_loc < 0 || next_loc >= (int)next_occupant.size())
+            return false;
+        if (current_occupant[current_loc] >= 0 || next_occupant[next_loc] >= 0)
+            return false;
+        current_occupant[current_loc] = agent;
+        next_occupant[next_loc] = agent;
+    }
+    for (int agent = 0; agent < num_of_agents; agent++)
+    {
+        int current_loc = current_states[agent].location;
+        int next_loc = next_states[agent].location;
+        if (current_loc == next_loc)
+            continue;
+        int other = current_occupant[next_loc];
+        if (other >= 0 && other != agent && next_states[other].location == current_loc)
+            return false;
     }
     return true;
 }
@@ -917,6 +939,8 @@ bool PIBT::assignment_pass(int local_t,
     vector<int> next_occupant(G.size(), -1);
     vector<bool> assigned(num_of_agents, false);
     vector<bool> visiting(num_of_agents, false);
+    vector<int> assignment_log;
+    assignment_log.reserve(num_of_agents);
     remaining_assignment_budget = step_assignment_budget();
 
     for (int agent : order)
@@ -925,8 +949,8 @@ bool PIBT::assignment_pass(int local_t,
             continue;
         double propagated_regret = 0;
         if (!assign_agent(agent, local_t, current_states, current_occupant,
-                          next_states, next_occupant, assigned, visiting, -1,
-                          propagated_regret))
+                          next_states, next_occupant, assigned, visiting,
+                          assignment_log, -1, propagated_regret))
         {
             if (count_fallbacks)
                 wait_fallbacks++;
