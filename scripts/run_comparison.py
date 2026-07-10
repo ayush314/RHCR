@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import subprocess
 import threading
@@ -10,14 +11,21 @@ from pathlib import Path
 
 
 METHODS = {
-    "pbs_vanilla": "vanilla",
-    "pbs_distance_age": "distance_age",
-    "pbs_pressure_aware": "pressure_aware",
+    "pbs_vanilla": {"solver": "PBS", "station_policy": "vanilla"},
+    "pbs_distance_age": {"solver": "PBS", "station_policy": "distance_age"},
+    "pbs_pressure_aware": {"solver": "PBS", "station_policy": "pressure_aware"},
+    "pibt_vanilla": {"solver": "PIBT", "pibt_policy": "vanilla"},
+    "pibt_distance_age": {"solver": "PIBT", "pibt_policy": "distance_age"},
+    "pibt_pressure": {"solver": "PIBT", "pibt_policy": "pressure"},
 }
 
 
 def parse_counts(value: str) -> list[int]:
     return [int(part.strip()) for part in value.split(",") if part.strip()]
+
+
+def plaza_counts_below_floor(counts: list[int]) -> list[int]:
+    return [count for count in counts if count < 20]
 
 
 def parse_methods(value: str) -> list[str]:
@@ -62,8 +70,19 @@ def classify_run(log_path: Path, summary_path: Path, return_code: int, timed_out
     if not summary_path.exists():
         return "failed", "missing_summary"
     log_text = log_path.read_text(errors="ignore") if log_path.exists() else ""
+    with summary_path.open() as fh:
+        summary = next(csv.DictReader(fh), {})
+    termination_reason = summary.get("termination_reason", "")
+    if termination_reason == "traffic_jam":
+        return "failed", "traffic_jam"
+    if termination_reason == "solver_failure":
+        return "failed", "solver_failure"
+    if termination_reason == "commit_repair_failure":
+        return "failed", "internal_repair_failure"
     if "Failed to repair workstation commitment conflicts" in log_text:
         return "failed", "internal_repair_failure"
+    if "failed to produce a valid workstation plan" in log_text:
+        return "failed", "solver_failure"
     if "Invalid move" in log_text:
         return "failed", "invalid_move"
     if "has a conflict with drive" in log_text or "left workstation early" in log_text:
@@ -77,7 +96,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the paper comparison on the workstation benchmarks.")
     parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed0to19"))
     parser.add_argument("--binary", default=str(repo_root / "lifelong"))
-    parser.add_argument("--seed-start", type=int, default=0)
+    parser.add_argument("--seed-start", type=int, default=1)
     parser.add_argument("--seed-count", type=int, default=20)
     parser.add_argument("--seed-list", type=parse_seed_list)
     parser.add_argument("--simulation-time", type=int, default=5000)
@@ -85,16 +104,58 @@ def main() -> int:
     parser.add_argument("--simulation-window", type=int, default=5)
     parser.add_argument("--service-time", type=int, default=3)
     parser.add_argument("--pressure-threshold", type=int)
+    parser.add_argument("--pibt-pressure-entry-penalty", type=float, default=1.0)
+    parser.add_argument("--pibt-pressure-inbound-limit", type=int, default=4)
+    parser.add_argument("--pibt-pressure-profile", choices=("none", "half", "severe", "thirds"), default="thirds")
+    parser.add_argument("--pibt-wait-penalty", type=float, default=2.0)
+    parser.add_argument("--pibt-exit-bonus", type=float, default=1.0)
+    parser.add_argument("--pibt-front-bonus", type=float, default=3.0)
+    parser.add_argument("--pibt-soft-collision-penalty", type=float, default=0.0)
+    parser.add_argument("--pibt-hindrance", dest="pibt_hindrance", action="store_true")
+    parser.add_argument("--no-pibt-hindrance", dest="pibt_hindrance", action="store_false")
+    parser.add_argument("--pibt-regret-iterations", type=int, default=1)
+    parser.add_argument("--pibt-regret-weight", type=float, default=0.5)
+    parser.add_argument(
+        "--pibt-regret-scope",
+        choices=("all", "pickup", "exit_pickup", "outside_zone", "pickup_outside_zone"),
+        default="all",
+    )
+    parser.add_argument("--pibt-random-tiebreak", dest="pibt_random_tiebreak", action="store_true")
+    parser.add_argument("--no-pibt-random-tiebreak", dest="pibt_random_tiebreak", action="store_false")
+    parser.add_argument(
+        "--pibt-hindrance-scope",
+        choices=(
+            "all", "inherited", "dense", "inherited_dense", "station", "inherited_station",
+            "outside_zone", "inherited_outside_zone", "pickup", "inherited_pickup",
+        ),
+        default="inherited",
+    )
+    parser.add_argument("--pibt-front-priority", dest="no_pibt_front_priority", action="store_false")
+    parser.add_argument("--no-pibt-front-priority", dest="no_pibt_front_priority", action="store_true")
+    parser.add_argument("--pibt-phase-priority", dest="no_pibt_phase_priority", action="store_false")
+    parser.add_argument("--no-pibt-phase-priority", dest="no_pibt_phase_priority", action="store_true")
+    parser.set_defaults(
+        pibt_hindrance=True,
+        no_pibt_front_priority=False,
+        no_pibt_phase_priority=True,
+        pibt_random_tiebreak=True,
+    )
     parser.add_argument("--cutoff-time", type=int, default=60)
     parser.add_argument("--process-timeout", type=int, default=1800)
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--screen", type=int, default=0)
+    parser.add_argument(
+        "--continue-on-traffic-jam",
+        action="store_true",
+        help="Record traffic-jam episodes but do not terminate the workstation simulation when they occur.",
+    )
     parser.add_argument("--alley-counts", default="10,20,30,40,50")
     parser.add_argument("--plaza-counts", default="20,30,40,50,60")
+    parser.add_argument("--lorr-counts", default="", help="Agent counts for the adapted LoRR warehouse-small benchmark.")
     parser.add_argument(
         "--methods",
         type=parse_methods,
-        default=["pbs_vanilla", "pbs_distance_age", "pbs_pressure_aware"],
+        default=list(METHODS.keys()),
     )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -116,6 +177,18 @@ def main() -> int:
             "counts": parse_counts(args.plaza_counts),
         },
     }
+    lorr_counts = parse_counts(args.lorr_counts)
+    if lorr_counts:
+        grids["lorr_warehouse_small"] = {
+            "benchmark": repo_root / "benchmarks" / "lorr" / "warehouse_small.json",
+            "counts": lorr_counts,
+        }
+    invalid_plaza_counts = plaza_counts_below_floor(grids["plaza"]["counts"])
+    if invalid_plaza_counts:
+        parser.error(
+            "Plaza counts must be at least 20 for this workstation comparison; "
+            f"got {invalid_plaza_counts}."
+        )
 
     write_json(
         root / "run_manifest.json",
@@ -127,6 +200,22 @@ def main() -> int:
             "simulation_window": args.simulation_window,
             "service_time": args.service_time,
             "pressure_threshold": args.pressure_threshold,
+            "pibt_pressure_entry_penalty": args.pibt_pressure_entry_penalty,
+            "pibt_pressure_inbound_limit": args.pibt_pressure_inbound_limit,
+            "pibt_pressure_profile": args.pibt_pressure_profile,
+            "pibt_wait_penalty": args.pibt_wait_penalty,
+            "pibt_exit_bonus": args.pibt_exit_bonus,
+            "pibt_front_bonus": args.pibt_front_bonus,
+            "pibt_soft_collision_penalty": args.pibt_soft_collision_penalty,
+            "pibt_hindrance": args.pibt_hindrance,
+            "pibt_hindrance_scope": args.pibt_hindrance_scope,
+            "pibt_regret_iterations": args.pibt_regret_iterations,
+            "pibt_regret_weight": args.pibt_regret_weight,
+            "pibt_regret_scope": args.pibt_regret_scope,
+            "pibt_random_tiebreak": args.pibt_random_tiebreak,
+            "pibt_front_priority": not args.no_pibt_front_priority,
+            "pibt_phase_priority": not args.no_pibt_phase_priority,
+            "continue_on_traffic_jam": args.continue_on_traffic_jam,
             "cutoff_time": args.cutoff_time,
             "process_timeout": args.process_timeout,
             "grids": {name: cfg["counts"] for name, cfg in grids.items()},
@@ -152,12 +241,13 @@ def main() -> int:
             return
 
         cell_dir.mkdir(parents=True, exist_ok=True)
+        method_config = METHODS[method_name]
         cmd = [
             str(binary),
             "--scenario", "WORKSTATION",
             "--benchmark", str(benchmark),
-            "--solver", "PBS",
-            "--station_policy", METHODS[method_name],
+            "--solver", method_config["solver"],
+            "--station_policy", method_config.get("station_policy", "vanilla"),
             "--agentNum", str(agent_count),
             "--simulation_time", str(args.simulation_time),
             "--simulation_window", str(args.simulation_window),
@@ -166,8 +256,26 @@ def main() -> int:
             "--cutoffTime", str(args.cutoff_time),
             "--seed", str(seed),
             "--screen", str(args.screen),
+            "--stop_at_traffic_jam", "false" if args.continue_on_traffic_jam else "true",
             "--output", str(cell_dir),
         ]
+        if "pibt_policy" in method_config:
+            cmd.extend(["--pibt_policy", method_config["pibt_policy"]])
+            cmd.extend(["--pibt_pressure_inbound_limit", str(args.pibt_pressure_inbound_limit)])
+            cmd.extend(["--pibt_pressure_profile", args.pibt_pressure_profile])
+            cmd.extend(["--pibt_wait_penalty", str(args.pibt_wait_penalty)])
+            cmd.extend(["--pibt_exit_bonus", str(args.pibt_exit_bonus)])
+            cmd.extend(["--pibt_front_bonus", str(args.pibt_front_bonus)])
+            cmd.extend(["--pibt_soft_collision_penalty", str(args.pibt_soft_collision_penalty)])
+            cmd.extend(["--pibt_hindrance", str(args.pibt_hindrance).lower()])
+            cmd.extend(["--pibt_hindrance_scope", args.pibt_hindrance_scope])
+            cmd.extend(["--pibt_regret_iterations", str(args.pibt_regret_iterations)])
+            cmd.extend(["--pibt_regret_weight", str(args.pibt_regret_weight)])
+            cmd.extend(["--pibt_regret_scope", args.pibt_regret_scope])
+            cmd.extend(["--pibt_random_tiebreak", str(args.pibt_random_tiebreak).lower()])
+            cmd.extend(["--pibt_front_priority", str(not args.no_pibt_front_priority).lower()])
+            cmd.extend(["--pibt_phase_priority", str(not args.no_pibt_phase_priority).lower()])
+            cmd.extend(["--pibt_pressure_entry_penalty", str(args.pibt_pressure_entry_penalty)])
         if args.pressure_threshold is not None:
             cmd.extend(["--pressure_threshold", str(args.pressure_threshold)])
 
@@ -195,7 +303,9 @@ def main() -> int:
                 "map": map_name,
                 "agent_count": agent_count,
                 "method": method_name,
-                "station_policy": METHODS[method_name],
+                "solver": method_config["solver"],
+                "station_policy": method_config.get("station_policy", ""),
+                "pibt_policy": method_config.get("pibt_policy", ""),
                 "seed": seed,
                 "status": status,
                 "failure_reason": failure_reason,

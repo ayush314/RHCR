@@ -9,9 +9,32 @@ from collections import defaultdict
 from pathlib import Path
 
 
-METHOD_ORDER = ["pbs_vanilla", "pbs_distance_age", "pbs_pressure_aware"]
-MAP_ORDER = ["alley", "plaza"]
-METRICS = ["service_rate", "queue_wait_p95", "mean_plan_ms", "pressure_active_fraction"]
+METHOD_ORDER = [
+    "pbs_vanilla",
+    "pbs_distance_age",
+    "pbs_pressure_aware",
+    "pibt_vanilla",
+    "pibt_distance_age",
+    "pibt_pressure",
+]
+MAP_ORDER = ["alley", "plaza", "lorr_warehouse_small"]
+METRICS = [
+    "service_rate",
+    "queue_wait_p95",
+    "mean_plan_ms",
+    "plan_runtime_slope_ms_per_1000_steps",
+    "termination_timestep",
+    "terminated_by_traffic_jam",
+    "terminated_by_commit_repair_failure",
+    "terminated_by_solver_failure",
+    "pressure_active_fraction",
+    "traffic_jam_fraction",
+    "pibt_inheritance_calls",
+    "pibt_backtracks",
+    "pibt_wait_fallbacks",
+    "pibt_pressure_rank_changes",
+    "pibt_regret_updates",
+]
 
 
 def method_sort_key(name: str) -> tuple[int, str]:
@@ -41,21 +64,18 @@ def stddev(values: list[float]) -> float:
     return math.sqrt(sum((value - mu) ** 2 for value in values) / (len(values) - 1))
 
 
-def read_summary(path: Path) -> dict[str, float]:
+def read_summary(path: Path) -> dict[str, float | str]:
     with path.open() as fh:
         row = next(csv.DictReader(fh))
-    return {metric: float(row[metric]) for metric in METRICS}
+    metrics: dict[str, float | str] = {}
+    for metric in METRICS:
+        value = row.get(metric, "")
+        metrics[metric] = "" if value == "" else float(value)
+    return metrics
 
 
-def main() -> int:
-    repo_root = Path(__file__).resolve().parents[1]
-    parser = argparse.ArgumentParser(description="Aggregate workstation comparison results.")
-    parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed0to19"))
-    args = parser.parse_args()
-
-    root = Path(args.root)
+def read_status_rows(root: Path) -> list[dict[str, str | int | float]]:
     combined_rows: list[dict[str, str | int | float]] = []
-
     for status_path in sorted(root.rglob("status.json")):
         payload = json.loads(status_path.read_text())
         if "map" not in payload or "method" not in payload or "agent_count" not in payload:
@@ -67,18 +87,53 @@ def main() -> int:
                 metrics = read_summary(summary_path)
             except Exception:
                 pass
+        status = payload["status"]
+        failure_reason = payload.get("failure_reason", "")
+        termination_failures = (
+            ("terminated_by_traffic_jam", "traffic_jam"),
+            ("terminated_by_commit_repair_failure", "internal_repair_failure"),
+            ("terminated_by_solver_failure", "solver_failure"),
+        )
+        for metric, reason in termination_failures:
+            if metrics.get(metric) == 1.0:
+                status = "failed"
+                failure_reason = reason
+                break
         combined_rows.append(
             {
                 "map": payload["map"],
                 "agent_count": int(payload["agent_count"]),
                 "method": payload["method"],
                 "seed": int(payload.get("seed", 0)),
-                "status": payload["status"],
-                "failure_reason": payload.get("failure_reason", ""),
+                "status": status,
+                "failure_reason": failure_reason,
                 **metrics,
                 "output_dir": payload.get("output_dir", str(status_path.parent)),
             }
         )
+    return combined_rows
+
+
+def read_existing_combined(path: Path) -> list[dict[str, str]]:
+    with path.open() as fh:
+        return list(csv.DictReader(fh))
+
+
+def main() -> int:
+    repo_root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description="Aggregate workstation comparison results.")
+    parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed0to19"))
+    args = parser.parse_args()
+
+    root = Path(args.root)
+    combined_path = root / "combined_summary.csv"
+    combined_rows: list[dict[str, str | int | float]] = read_status_rows(root)
+    write_combined = True
+    if not combined_rows and combined_path.exists():
+        combined_rows = read_existing_combined(combined_path)
+        write_combined = False
+    if not combined_rows:
+        raise SystemExit(f"No status.json files or existing combined_summary.csv found under {root}")
 
     combined_rows.sort(
         key=lambda row: (
@@ -89,22 +144,23 @@ def main() -> int:
         )
     )
 
-    with (root / "combined_summary.csv").open("w", newline="") as fh:
-        writer = csv.DictWriter(
-            fh,
-            fieldnames=[
-                "map",
-                "agent_count",
-                "method",
-                "seed",
-                "status",
-                "failure_reason",
-                *METRICS,
-                "output_dir",
-            ],
-        )
-        writer.writeheader()
-        writer.writerows(combined_rows)
+    if write_combined:
+        with combined_path.open("w", newline="") as fh:
+            writer = csv.DictWriter(
+                fh,
+                fieldnames=[
+                    "map",
+                    "agent_count",
+                    "method",
+                    "seed",
+                    "status",
+                    "failure_reason",
+                    *METRICS,
+                    "output_dir",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(combined_rows)
 
     grouped: dict[tuple[str, int, str], list[dict[str, str | int | float]]] = defaultdict(list)
     for row in combined_rows:
@@ -134,9 +190,12 @@ def main() -> int:
             "failure_reasons": ";".join(failure_reasons),
         }
         for metric in METRICS:
-            values = [float(row[metric]) for row in clean_entries if row[metric] != ""]
+            values = [float(row.get(metric, "")) for row in clean_entries if row.get(metric, "") != ""]
+            all_values = [float(row.get(metric, "")) for row in entries if row.get(metric, "") != ""]
             aggregate[metric] = "" if not values else mean(values)
             aggregate[f"{metric}_std"] = "" if not values else stddev(values)
+            aggregate[f"{metric}_all"] = "" if not all_values else mean(all_values)
+            aggregate[f"{metric}_all_std"] = "" if not all_values else stddev(all_values)
         aggregate_rows.append(aggregate)
 
     with (root / "aggregate.csv").open("w", newline="") as fh:
@@ -153,6 +212,8 @@ def main() -> int:
                 "failure_reasons",
                 *METRICS,
                 *(f"{metric}_std" for metric in METRICS),
+                *(f"{metric}_all" for metric in METRICS),
+                *(f"{metric}_all_std" for metric in METRICS),
             ],
         )
         writer.writeheader()

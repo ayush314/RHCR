@@ -5,6 +5,7 @@
 #include "WorkstationGraph.h"
 #include "WorkstationSystem.h"
 #include "ID.h"
+#include "PIBT.h"
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 
@@ -69,6 +70,27 @@ MAPFSolver* set_solver(const BasicGraph& G, const boost::program_options::variab
         pbs->setRT(vm["CAT"].as<bool>(), prioritize_start);
 		mapf_solver = pbs;
 	}
+	else if (solver_name == "PIBT")
+	{
+		PIBT* pibt = new PIBT(G, *path_planner);
+		pibt->set_pibt_policy(vm["pibt_policy"].as<string>());
+		pibt->set_pressure_profile(vm["pibt_pressure_profile"].as<string>());
+		pibt->set_hindrance_scope(vm["pibt_hindrance_scope"].as<string>());
+		pibt->pressure_entry_penalty = vm["pibt_pressure_entry_penalty"].as<double>();
+		pibt->set_pressure_inbound_limit(vm["pibt_pressure_inbound_limit"].as<int>());
+		pibt->wait_penalty = vm["pibt_wait_penalty"].as<double>();
+		pibt->exit_bonus = vm["pibt_exit_bonus"].as<double>();
+		pibt->front_bonus = vm["pibt_front_bonus"].as<double>();
+		pibt->soft_collision_penalty = vm["pibt_soft_collision_penalty"].as<double>();
+		pibt->hindrance_tiebreak = vm["pibt_hindrance"].as<bool>();
+		pibt->regret_iterations = vm["pibt_regret_iterations"].as<int>();
+		pibt->regret_weight = vm["pibt_regret_weight"].as<double>();
+		pibt->regret_scope = vm["pibt_regret_scope"].as<string>();
+		pibt->random_tiebreak = vm["pibt_random_tiebreak"].as<bool>();
+		pibt->front_priority_enabled = vm["pibt_front_priority"].as<bool>();
+		pibt->phase_priority_enabled = vm["pibt_phase_priority"].as<bool>();
+		mapf_solver = pibt;
+	}
     else if (solver_name == "WHCA")
 	{
 		mapf_solver = new WHCAStar(G, *path_planner);
@@ -110,7 +132,7 @@ int main(int argc, char** argv)
 		("cutoffTime,t", po::value<int>()->default_value(60), "cutoff time (seconds)")
 		("seed,d", po::value<int>(), "random seed")
 		("screen,s", po::value<int>()->default_value(1), "screen option (0: none; 1: results; 2:all)")
-			("solver", po::value<string>()->default_value("PBS"), "solver (LRA, PBS, WHCA, ECBS)")
+			("solver", po::value<string>()->default_value("PBS"), "solver (LRA, PBS, PIBT, WHCA, ECBS)")
 		("id", po::value<bool>()->default_value(false), "independence detection")
 		("single_agent_solver", po::value<string>()->default_value("SIPP"), "single-agent solver (ASTAR, SIPP)")
 		("lazyP", po::value<bool>()->default_value(false), "use lazy priority")
@@ -122,6 +144,23 @@ int main(int argc, char** argv)
         ("service_time", po::value<int>()->default_value(3), "workstation dwell time")
         ("pressure_threshold", po::value<int>()->default_value(-1), "workstation pressure trigger threshold override; -1 uses the station policy default")
         ("station_policy", po::value<string>()->default_value("vanilla"), "workstation planning policy (vanilla, distance_age, pressure_aware)")
+        ("stop_at_traffic_jam", po::value<bool>()->default_value(true), "stop workstation simulations when the traffic-jam detector triggers")
+        ("pibt_policy", po::value<string>()->default_value("vanilla"), "PIBT workstation policy (vanilla, distance_age, pressure)")
+        ("pibt_pressure_entry_penalty", po::value<double>()->default_value(1), "PIBT pressure-policy penalty for entering pressured station zones")
+        ("pibt_pressure_inbound_limit", po::value<int>()->default_value(4), "maximum target-bound PIBT agents admitted inside each pressured station zone")
+        ("pibt_pressure_profile", po::value<string>()->default_value("thirds"), "PIBT pressure admission profile (none, half, severe, thirds)")
+        ("pibt_wait_penalty", po::value<double>()->default_value(2), "PIBT pressure-policy wait penalty")
+        ("pibt_exit_bonus", po::value<double>()->default_value(1), "PIBT pressure-policy exit progress bonus")
+        ("pibt_front_bonus", po::value<double>()->default_value(3), "PIBT pressure-policy front-runner progress bonus")
+        ("pibt_soft_collision_penalty", po::value<double>()->default_value(0), "PIBT pressure-policy occupied-candidate penalty")
+        ("pibt_hindrance", po::value<bool>()->default_value(true), "use the lightweight PIBT hindrance tiebreaker")
+        ("pibt_hindrance_scope", po::value<string>()->default_value("inherited"), "PIBT hindrance scope")
+        ("pibt_regret_iterations", po::value<int>()->default_value(1), "number of PIBT regret-learning passes; 1 disables regret")
+        ("pibt_regret_weight", po::value<double>()->default_value(0.5), "exponential update weight for PIBT regret learning")
+        ("pibt_regret_scope", po::value<string>()->default_value("all"), "PIBT regret scope (all, pickup, exit_pickup, outside_zone, pickup_outside_zone)")
+        ("pibt_random_tiebreak", po::value<bool>()->default_value(true), "use a seeded random final PIBT preference tiebreak")
+        ("pibt_front_priority", po::value<bool>()->default_value(true), "give the pressure front runner an ordering boost")
+        ("pibt_phase_priority", po::value<bool>()->default_value(false), "give service and exit phases an ordering boost")
 		("potential_function", po::value<string>()->default_value("NONE"), "potential function (NONE, SOC, IC)")
 		("potential_threshold", po::value<double>()->default_value(0), "potential threshold")
 		("rotation", po::value<bool>()->default_value(false), "consider rotation")
@@ -182,10 +221,69 @@ int main(int argc, char** argv)
             std::cerr << "WORKSTATION does not support hold_endpoints or dummy_paths" << endl;
             exit(-1);
         }
-        if (vm["solver"].as<string>() != "PBS" || vm["id"].as<bool>())
+        if (vm["agentNum"].as<int>() <= 0 || vm["simulation_window"].as<int>() <= 0 ||
+            vm["planning_window"].as<int>() <= 0 || vm["service_time"].as<int>() < 0)
         {
-            std::cerr << "WORKSTATION requires --solver PBS with --id false" << endl;
+            std::cerr << "WORKSTATION requires positive agent and window counts and nonnegative service time" << endl;
             exit(-1);
+        }
+        string workstation_solver = vm["solver"].as<string>();
+        if ((workstation_solver != "PBS" && workstation_solver != "PIBT") || vm["id"].as<bool>())
+        {
+            std::cerr << "WORKSTATION requires --solver PBS or --solver PIBT with --id false" << endl;
+            exit(-1);
+        }
+        if (workstation_solver == "PIBT")
+        {
+            string pibt_policy = vm["pibt_policy"].as<string>();
+            if (pibt_policy != "vanilla" &&
+                pibt_policy != "distance_age" &&
+                pibt_policy != "pressure")
+            {
+                std::cerr << "WORKSTATION PIBT policy must be vanilla, distance_age, or pressure" << endl;
+                exit(-1);
+            }
+            if (vm["pibt_pressure_inbound_limit"].as<int>() < 1)
+            {
+                std::cerr << "WORKSTATION PIBT pressure inbound limit must be positive" << endl;
+                exit(-1);
+            }
+            string pressure_profile = vm["pibt_pressure_profile"].as<string>();
+            if (pressure_profile != "none" && pressure_profile != "half" &&
+                pressure_profile != "severe" && pressure_profile != "thirds")
+            {
+                std::cerr << "WORKSTATION PIBT pressure profile must be none, half, severe, or thirds" << endl;
+                exit(-1);
+            }
+            string hindrance_scope = vm["pibt_hindrance_scope"].as<string>();
+            if (hindrance_scope != "all" && hindrance_scope != "inherited" &&
+                hindrance_scope != "dense" && hindrance_scope != "inherited_dense" &&
+                hindrance_scope != "station" && hindrance_scope != "inherited_station" &&
+                hindrance_scope != "outside_zone" && hindrance_scope != "inherited_outside_zone" &&
+                hindrance_scope != "pickup" && hindrance_scope != "inherited_pickup")
+            {
+                std::cerr << "Invalid WORKSTATION PIBT hindrance scope" << endl;
+                exit(-1);
+            }
+            if (vm["pibt_regret_iterations"].as<int>() < 1)
+            {
+                std::cerr << "WORKSTATION PIBT regret iterations must be positive" << endl;
+                exit(-1);
+            }
+            double regret_weight = vm["pibt_regret_weight"].as<double>();
+            if (regret_weight < 0 || regret_weight > 1)
+            {
+                std::cerr << "WORKSTATION PIBT regret weight must be in [0, 1]" << endl;
+                exit(-1);
+            }
+            string regret_scope = vm["pibt_regret_scope"].as<string>();
+            if (regret_scope != "all" && regret_scope != "pickup" &&
+                regret_scope != "exit_pickup" && regret_scope != "outside_zone" &&
+                regret_scope != "pickup_outside_zone")
+            {
+                std::cerr << "Invalid WORKSTATION PIBT regret scope" << endl;
+                exit(-1);
+            }
         }
     }
     else if (map_path.empty())
@@ -293,12 +391,21 @@ int main(int argc, char** argv)
         WorkstationGrid G;
         if (!G.load_map(benchmark_path))
             return -1;
+        int agent_count = vm["agentNum"].as<int>();
+        if (agent_count > (int)G.free_start_cells.size())
+        {
+            std::cerr << "WORKSTATION requested " << agent_count << " agents, but benchmark has only "
+                      << G.free_start_cells.size() << " valid start cells" << endl;
+            return -1;
+        }
         MAPFSolver* solver = set_solver(G, vm);
         WorkstationSystem system(G, *solver);
         set_parameters(system, vm);
         system.workstation_service_time = vm["service_time"].as<int>();
         system.station_policy = vm["station_policy"].as<string>();
+        system.pibt_policy = vm["pibt_policy"].as<string>();
         system.workstation_pressure_threshold = vm["pressure_threshold"].as<int>();
+        system.stop_at_traffic_jam = vm["stop_at_traffic_jam"].as<bool>();
         G.preprocessing(system.consider_rotation);
         system.simulate(vm["simulation_time"].as<int>());
         return 0;

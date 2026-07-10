@@ -20,7 +20,7 @@ int as_loc(const WorkstationGrid& G, const ptree& node)
     return G.to_id(x, y);
 }
 
-void set_cardinal_weights(WorkstationGrid& G)
+void set_cardinal_weights(WorkstationGrid& G, const vector<bool>& blocked = {})
 {
     G.move[0] = 1;
     G.move[1] = -G.cols;
@@ -33,17 +33,73 @@ void set_cardinal_weights(WorkstationGrid& G)
         for (int x = 0; x < G.cols; x++)
         {
             int loc = G.to_id(x, y);
+            bool is_blocked = !blocked.empty() && blocked[loc];
+            if (is_blocked)
+            {
+                G.types[loc] = "Obstacle";
+                continue;
+            }
             G.weights[loc][4] = 1;
-            if (x + 1 < G.cols)
+            if (x + 1 < G.cols && (blocked.empty() || !blocked[loc + 1]))
                 G.weights[loc][0] = 1;
-            if (y - 1 >= 0)
+            if (y - 1 >= 0 && (blocked.empty() || !blocked[loc - G.cols]))
                 G.weights[loc][1] = 1;
-            if (x - 1 >= 0)
+            if (x - 1 >= 0 && (blocked.empty() || !blocked[loc - 1]))
                 G.weights[loc][2] = 1;
-            if (y + 1 < G.rows)
+            if (y + 1 < G.rows && (blocked.empty() || !blocked[loc + G.cols]))
                 G.weights[loc][3] = 1;
         }
     }
+}
+
+string resolve_relative_path(const string& benchmark_path, const string& referenced_path)
+{
+    if (referenced_path.empty() || referenced_path.front() == '/')
+        return referenced_path;
+    size_t slash = benchmark_path.find_last_of("/\\");
+    return slash == string::npos
+        ? referenced_path
+        : benchmark_path.substr(0, slash + 1) + referenced_path;
+}
+
+bool load_movingai_grid(WorkstationGrid& G, const string& path)
+{
+    std::ifstream input(path.c_str());
+    if (!input.is_open())
+    {
+        std::cout << "MovingAI map " << path << " does not exist." << std::endl;
+        return false;
+    }
+
+    string label;
+    string type;
+    if (!(input >> label >> type) || label != "type" ||
+        !(input >> label >> G.rows) || label != "height" ||
+        !(input >> label >> G.cols) || label != "width" ||
+        !(input >> label) || label != "map" || G.rows <= 0 || G.cols <= 0)
+    {
+        std::cout << "Invalid MovingAI map header in " << path << std::endl;
+        return false;
+    }
+    string line;
+    std::getline(input, line);
+
+    vector<bool> blocked(G.rows * G.cols, false);
+    for (int y = 0; y < G.rows; y++)
+    {
+        if (!std::getline(input, line) || (int)line.size() != G.cols)
+        {
+            std::cout << "Invalid MovingAI map row " << y << " in " << path << std::endl;
+            return false;
+        }
+        for (int x = 0; x < G.cols; x++)
+        {
+            char cell = line[x];
+            blocked[G.to_id(x, y)] = cell == '@' || cell == 'O' || cell == 'T' || cell == 'W';
+        }
+    }
+    set_cardinal_weights(G, blocked);
+    return true;
 }
 } // namespace
 
@@ -63,9 +119,26 @@ bool WorkstationGrid::load_map(string fname)
 
     ptree root;
     read_json(stream, root);
-    rows = root.get<int>("rows");
-    cols = root.get<int>("cols");
-    set_cardinal_weights(*this);
+    auto movingai_map = root.get_optional<string>("movingai_map");
+    if (movingai_map)
+    {
+        string source_path = resolve_relative_path(fname, *movingai_map);
+        if (!load_movingai_grid(*this, source_path))
+            return false;
+        int expected_rows = root.get<int>("rows", rows);
+        int expected_cols = root.get<int>("cols", cols);
+        if (rows != expected_rows || cols != expected_cols)
+        {
+            std::cout << "Benchmark dimensions do not match " << source_path << std::endl;
+            return false;
+        }
+    }
+    else
+    {
+        rows = root.get<int>("rows");
+        cols = root.get<int>("cols");
+        set_cardinal_weights(*this);
+    }
 
     for (const auto& child : root.get_child("pickup_endpoints"))
     {
@@ -130,7 +203,7 @@ bool WorkstationGrid::load_map(string fname)
     }
     for (int loc = 0; loc < size(); loc++)
     {
-        if (reserved.find(loc) == reserved.end())
+        if (weights[loc][4] < WEIGHT_MAX && reserved.find(loc) == reserved.end())
             free_start_cells.push_back(loc);
     }
 

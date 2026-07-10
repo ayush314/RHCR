@@ -12,6 +12,7 @@ lifelong.vcxproj.user
 results
 __pycache__/
 *.pyc
+*_heuristics_table.txt
 .idea
 lifelong
 *~

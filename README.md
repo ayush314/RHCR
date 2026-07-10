@@ -1,6 +1,6 @@
-# Pressure-Aware PBS for Lifelong MAPF with Workstations
+# Pressure-Aware PBS and PIBT for Lifelong MAPF with Workstations
 
-Pressure-Aware PBS is a Priority-Based Search method for lifelong Multi-Agent Path Finding (MAPF) with workstations, built on Rolling-Horizon Collision Resolution (RHCR).
+This project studies pressure-aware Priority-Based Search (PBS) and Priority Inheritance with Backtracking (PIBT) for lifelong Multi-Agent Path Finding (MAPF) with workstations, built on Rolling-Horizon Collision Resolution (RHCR).
 
 The code requires the external library BOOST (https://www.boost.org/).
 On Ubuntu, you can install it with:
@@ -29,17 +29,58 @@ For example:
   --simulation_window 5 \
   --planning_window 20 \
   --service_time 3 \
-  --seed 0
+  --seed 1
 ```
 
 This command runs RHCR with PBS and the pressure-aware policy on the `alley` workstation benchmark.
 
+The scalable PIBT comparison uses:
+
+```bash
+./lifelong \
+  --scenario WORKSTATION \
+  --benchmark benchmarks/lorr/warehouse_small.json \
+  --solver PIBT \
+  --pibt_policy pressure \
+  --agentNum 783 \
+  --simulation_time 500 \
+  --simulation_window 5 \
+  --planning_window 20 \
+  --service_time 3 \
+  --seed 1
+```
+
+Pressure PIBT is a preference-construction extension of a shared PIBT core. The three reportable methods are `vanilla`, `distance_age`, and `pressure`. They use the same recursive one-step assignment, dynamic priority ages, workstation simulator, and seeded random final preference tie.
+
+Pressure PIBT keeps the dynamic priority order instead of globally reordering service and exit phases. Its one ordering intervention boosts the primary front runner at each pressured station, chosen by boundary-entry time, distance, task-issue time, and agent ID.
+
+Candidate actions are ranked by remaining-goal distance plus pressure-local terms for pressured-zone entry, front-runner progress, exit progress, and waiting. A lightweight hindrance value, based on the preference construction of Okumura et al., breaks ties only during inherited PIBT calls. Pressure changes candidate order but never removes an otherwise valid action; vertex and edge-swap constraints remain hard constraints.
+
+Each pressured station normally admits up to four target-bound agents. The `thirds` profile contracts that limit from four to three at one-third non-service-zone occupancy and from three to two at two-thirds occupancy. If recursive assignment cannot produce a valid move, the implementation attempts a deterministic wait repair and records it in `pibt_wait_fallbacks`. This is a safety repair after assignment fails, not PIBT's normal wait action or an additional planner.
+
+The LoRR transfer uses the official 2023 `warehouse_small.map`. The adapter treats LoRR `S` cells as storage pickups and a deterministic spaced subset of `E` cells as serviced workstations. The checked-in sidecar has 342 pickups, 12 workstations, and 783 valid start cells. Regenerate it with:
+
+```bash
+python3 scripts/import_lorr_workstation.py \
+  --map benchmarks/lorr/warehouse_small.map \
+  --output benchmarks/lorr/warehouse_small.json \
+  --station-count 12
+```
+
 The main arguments are:
 
 - `scenario`: the simulation scenario. Here it is `WORKSTATION`.
-- `benchmark`: the workstation benchmark JSON (`benchmarks/alley.json` or `benchmarks/plaza.json`).
-- `solver`: the windowed MAPF solver. Here it is `PBS`.
+- `benchmark`: a workstation benchmark JSON (`alley`, `plaza`, or the adapted LoRR warehouse).
+- `solver`: the windowed MAPF solver (`PBS` or `PIBT`).
 - `station_policy`: the workstation-local PBS policy (`vanilla`, `distance_age`, or `pressure_aware`).
+- `pibt_policy`: the PIBT policy (`vanilla`, `distance_age`, or `pressure`).
+- `pibt_pressure_inbound_limit`: the normal target-bound admission limit for a pressured station zone (default `4`).
+- `pibt_pressure_profile`: occupancy-based admission rule (default `thirds`).
+- `pibt_hindrance`: enable the lightweight hindrance tiebreaker (default `true`).
+- `pibt_hindrance_scope`: where hindrance is applied (default `inherited`).
+- `pibt_front_priority`: boost the primary station front runner (default `true`).
+- `pibt_phase_priority`: globally boost service and exit phases (default `false`).
+- `pibt_regret_iterations`: preference-learning passes from Okumura et al.; `1` disables this optional ablation (default `1`).
 - `agentNum`: the number of agents.
 - `simulation_time`: the simulation horizon.
 - `simulation_window`: the replanning period `h`.
@@ -53,17 +94,49 @@ For the full list of parameters:
 ./lifelong --help
 ```
 
-To run the canonical comparison:
+To run the current PIBT comparison:
 
 ```bash
-python3 scripts/run_comparison.py
+python3 scripts/run_comparison.py \
+  --root results/pibt_primary_random_preference_h5_seed1to20 \
+  --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
+  --seed-start 1 \
+  --seed-count 20 \
+  --simulation-time 500 \
+  --alley-counts 20,48,76,104,131,158 \
+  --plaza-counts 40,90,140,190,240,288
+```
+
+To run the six-point LoRR capacity curve:
+
+```bash
+python3 scripts/run_comparison.py \
+  --root results/pibt_lorr_warehouse_small_tau3_h5_seed1to10 \
+  --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
+  --seed-start 1 \
+  --seed-count 10 \
+  --simulation-time 500 \
+  --service-time 3 \
+  --alley-counts '' \
+  --plaza-counts '' \
+  --lorr-counts 50,197,343,490,636,783 \
+  --continue-on-traffic-jam
 ```
 
 To aggregate the results:
 
 ```bash
-python3 scripts/aggregate_results.py
+python3 scripts/aggregate_results.py \
+  --root results/pibt_primary_random_preference_h5_seed1to20
 ```
+
+Each run writes `summary.csv` and per-replan `planning_runtime.csv`. Aggregation produces `combined_summary.csv` and `aggregate.csv`. The automated candidate search is in `scripts/auto_research_pibt.py`; rejected configurations and leaderboards belong under `results/_archive` rather than in the primary comparison.
+
+References:
+
+- Okumura et al., [Priority Inheritance with Backtracking for Iterative Multi-agent Path Finding](https://arxiv.org/abs/1901.11282).
+- Okumura et al., [Lightweight and Effective Preference Construction in PIBT for Iterative MAPF](https://arxiv.org/abs/2505.12623).
+- [League of Robot Runners 2023 Benchmark Archive](https://github.com/MAPF-Competition/Benchmark-Archive/tree/main/2023%20Competition).
 
 ## License
 

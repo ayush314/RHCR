@@ -1,6 +1,7 @@
 #include "WorkstationSystem.h"
 
 #include "PBS.h"
+#include "PIBT.h"
 
 #include <algorithm>
 #include <cmath>
@@ -51,13 +52,22 @@ void WorkstationSystem::initialize()
     workstation_agents.resize(num_of_drives);
     queue_wait_samples.clear();
     mean_plan_ms_samples.clear();
+    plan_timestep_samples.clear();
+    pressure_active_samples.clear();
     completed_services = 0;
     planning_episodes = 0;
     pressure_active_episodes = 0;
+    traffic_jam_episodes = 0;
+    pibt_inheritance_calls_total = 0;
+    pibt_backtracks_total = 0;
+    pibt_wait_fallbacks_total = 0;
+    pibt_pressure_rank_changes_total = 0;
+    pibt_regret_updates_total = 0;
     termination_reason = "not_started";
     termination_timestep = -1;
     terminated_by_traffic_jam = false;
     terminated_by_commit_repair_failure = false;
+    terminated_by_solver_failure = false;
     initialize_start_locations();
     initialize_tasks();
 }
@@ -151,11 +161,8 @@ int WorkstationSystem::station_pressure(int station_id) const
     for (int agent_id = 0; agent_id < num_of_drives; agent_id++)
     {
         int loc = starts[agent_id].location;
-        if (std::find(station.standby_cells.begin(), station.standby_cells.end(), loc) != station.standby_cells.end() ||
-            std::find(station.buffer_cells.begin(), station.buffer_cells.end(), loc) != station.buffer_cells.end())
-        {
+        if (loc != station.workstation && station.zone_cells.find(loc) != station.zone_cells.end())
             pressure++;
-        }
     }
     return pressure;
 }
@@ -214,9 +221,11 @@ void WorkstationSystem::update_goal_locations()
 void WorkstationSystem::sync_solver_context()
 {
     PBS* pbs = dynamic_cast<PBS*>(&solver);
+    PIBT* pibt = dynamic_cast<PIBT*>(&solver);
     std::vector<WorkstationAgentContext> context(num_of_drives);
     for (int k = 0; k < num_of_drives; k++)
     {
+        context[k].current_t = timestep;
         const auto& agent = workstation_agents[k];
         auto& ctx = context[k];
         if (agent.phase == WorkstationRuntimePhase::TO_STATION)
@@ -253,20 +262,56 @@ void WorkstationSystem::sync_solver_context()
         pbs->set_workstation_context(context);
     }
 
+    if (pibt != nullptr)
+    {
+        pibt->set_pibt_policy(pibt_policy);
+        pibt->tie_seed = (uint64_t)seed;
+        pibt->set_workstation_pressure_threshold(workstation_pressure_threshold);
+        pibt->set_workstation_context(context);
+    }
+}
+
+bool WorkstationSystem::solve_workstation_episode()
+{
+    update_initial_constraints(solver.initial_constraints);
+    bool solved = solver.run(starts, goal_locations, time_limit);
+    if (solved)
+    {
+        update_paths(solver.solution, INT_MAX);
+    }
+    else if (solver.get_name() == "PBS")
+    {
+        LRAStar lra(G, solver.path_planner);
+        lra.simulation_window = simulation_window;
+        lra.k_robust = k_robust;
+        lra.resolve_conflicts(solver.solution);
+        update_paths(lra.solution, INT_MAX);
+        solved = true;
+    }
+    if (log && solved)
+        solver.save_constraints_in_goal_node(outfile + "/goal_nodes/" + std::to_string(timestep) + ".gv");
+    if (log)
+        solver.save_search_tree(outfile + "/search_trees/" + std::to_string(timestep) + ".gv");
+    solver.save_results(outfile + "/solver.csv", std::to_string(timestep) + ","
+                        + std::to_string(num_of_drives) + "," + std::to_string(seed));
+    return solved;
 }
 
 void WorkstationSystem::record_episode_diagnostics()
 {
     planning_episodes++;
     const int pressure_threshold = effective_pressure_threshold(workstation_pressure_threshold);
+    bool pressure_active = false;
     for (size_t station_id = 0; station_id < G.stations.size(); station_id++)
     {
         if (station_pressure((int)station_id) >= pressure_threshold)
         {
             pressure_active_episodes++;
+            pressure_active = true;
             break;
         }
     }
+    pressure_active_samples.push_back(pressure_active ? 1 : 0);
 }
 
 void WorkstationSystem::seed_fixed_service_paths()
@@ -460,10 +505,18 @@ bool WorkstationSystem::resolve_committed_conflicts()
         }
     };
 
+    auto can_repair_agent = [&](int agent_id) {
+        return workstation_agents[agent_id].phase != WorkstationRuntimePhase::SERVICE;
+    };
+
     auto choose_repair_loser = [&](const SliceConflict& conf) {
         int hit1 = first_hit(conf.a1, conf.loc);
         int hit2 = first_hit(conf.a2, conf.loc);
         int loser = conf.a1;
+        if (!can_repair_agent(conf.a1) && can_repair_agent(conf.a2))
+            return conf.a2;
+        if (!can_repair_agent(conf.a2) && can_repair_agent(conf.a1))
+            return conf.a1;
         int rank1 = phase_rank(conf.a1);
         int rank2 = phase_rank(conf.a2);
         if (rank1 != rank2)
@@ -488,6 +541,9 @@ bool WorkstationSystem::resolve_committed_conflicts()
     vector< set<tuple<int, int, int> > > blocked_constraints(num_of_drives);
 
     auto replan_agent = [&](int agent) {
+        if (!can_repair_agent(agent))
+            return false;
+
         list< tuple<int, int, int> > initial_constraints;
         update_initial_constraints(initial_constraints);
 
@@ -593,6 +649,9 @@ bool WorkstationSystem::resolve_committed_conflicts()
     };
 
     auto attempt_pair_replan = [&](int first, int second, const SliceConflict& conf) {
+        if (!can_repair_agent(first) || !can_repair_agent(second))
+            return false;
+
         auto saved_first_constraints = blocked_constraints[first];
         auto saved_second_constraints = blocked_constraints[second];
         Path saved_first_path = paths[first];
@@ -708,7 +767,7 @@ bool WorkstationSystem::resolve_committed_conflicts()
             if (screen >= 2)
                 cout << "[repair] fallback replanning agent " << alternate << " after agent "
                      << loser << " failed for the same conflict" << endl;
-            if (!attempt_conflict_replan(alternate, conf))
+            if (!can_repair_agent(alternate) || !attempt_conflict_replan(alternate, conf))
             {
                 if (screen >= 2)
                     cout << "[repair] both single-agent repair choices failed for conflict between "
@@ -729,6 +788,11 @@ bool WorkstationSystem::resolve_committed_conflicts()
             }
         }
     }
+    pad_paths_through_execution_window();
+    enforce_workstation_episode_commitments();
+    SliceConflict final_conf;
+    if (find_first_conflict(final_conf))
+        write_repair_failure_artifact(final_conf, max_iterations);
     return false;
 }
 
@@ -764,6 +828,38 @@ bool WorkstationSystem::validate_move(int agent_id, const State& prev, const Sta
     }
     int dir = G.get_direction(prev.location, curr.location);
     return dir >= 0 && G.valid_move(prev.location, dir);
+}
+
+bool WorkstationSystem::workstation_congested() const
+{
+    if (simulation_window <= 1)
+        return false;
+
+    int eligible_agents = 0;
+    int wait_agents = 0;
+    for (int agent_id = 0; agent_id < num_of_drives; agent_id++)
+    {
+        const auto& agent = workstation_agents[agent_id];
+        int remaining_service = agent.service_complete_t - timestep;
+        if (agent.phase == WorkstationRuntimePhase::SERVICE &&
+            remaining_service >= simulation_window)
+        {
+            continue;
+        }
+
+        eligible_agents++;
+        const auto& path = paths[agent_id];
+        int t = 0;
+        while (t < simulation_window &&
+               path[timestep].location == path[timestep + t].location &&
+               path[timestep].orientation == path[timestep + t].orientation)
+        {
+            t++;
+        }
+        if (t == simulation_window)
+            wait_agents++;
+    }
+    return eligible_agents > 0 && wait_agents > eligible_agents / 2;
 }
 
 void WorkstationSystem::move_workstations()
@@ -907,12 +1003,34 @@ double WorkstationSystem::compute_mean_plan_ms() const
     return sum / mean_plan_ms_samples.size();
 }
 
+double WorkstationSystem::compute_plan_runtime_slope() const
+{
+    if (mean_plan_ms_samples.size() < 2 ||
+        mean_plan_ms_samples.size() != plan_timestep_samples.size())
+        return 0;
+
+    const double mean_t = std::accumulate(plan_timestep_samples.begin(),
+                                          plan_timestep_samples.end(), 0.0) /
+                          plan_timestep_samples.size();
+    const double mean_ms = compute_mean_plan_ms();
+    double covariance = 0;
+    double variance = 0;
+    for (size_t i = 0; i < mean_plan_ms_samples.size(); i++)
+    {
+        const double centered_t = plan_timestep_samples[i] - mean_t;
+        covariance += centered_t * (mean_plan_ms_samples[i] - mean_ms);
+        variance += centered_t * centered_t;
+    }
+    return variance == 0 ? 0 : 1000.0 * covariance / variance;
+}
+
 void WorkstationSystem::set_termination(const string& reason, int t)
 {
     termination_reason = reason;
     termination_timestep = t;
     terminated_by_traffic_jam = (reason == "traffic_jam");
     terminated_by_commit_repair_failure = (reason == "commit_repair_failure");
+    terminated_by_solver_failure = (reason == "solver_failure");
 }
 
 void WorkstationSystem::simulate(int simulation_time)
@@ -929,7 +1047,25 @@ void WorkstationSystem::simulate(int simulation_time)
         record_episode_diagnostics();
         sync_solver_context();
         seed_fixed_service_paths();
-        solve();
+        bool solved = solve_workstation_episode();
+        mean_plan_ms_samples.push_back(solver.runtime * 1000.0);
+        plan_timestep_samples.push_back(timestep);
+        PIBT* pibt = dynamic_cast<PIBT*>(&solver);
+        if (pibt != nullptr)
+        {
+            pibt_inheritance_calls_total += pibt->inheritance_calls;
+            pibt_backtracks_total += pibt->backtracks;
+            pibt_wait_fallbacks_total += pibt->wait_fallbacks;
+            pibt_pressure_rank_changes_total += pibt->pressure_rank_changes;
+            pibt_regret_updates_total += pibt->regret_updates;
+        }
+        if (!solved)
+        {
+            set_termination("solver_failure", timestep);
+            cout << solver.get_name() << " failed to produce a valid workstation plan at timestep "
+                 << timestep << endl;
+            break;
+        }
         pad_paths_through_execution_window();
         validate_execution_slice("post_solve");
         if (!resolve_committed_conflicts())
@@ -940,13 +1076,17 @@ void WorkstationSystem::simulate(int simulation_time)
             exit(-1);
         }
         validate_execution_slice("post_commit");
-        mean_plan_ms_samples.push_back(solver.runtime * 1000.0);
+        bool traffic_jam = workstation_congested();
         move_workstations();
-        if (congested())
+        if (traffic_jam)
         {
-            set_termination("traffic_jam", timestep);
-            cout << "***** Too many traffic jams ***" << endl;
-            break;
+            traffic_jam_episodes++;
+            if (stop_at_traffic_jam)
+            {
+                set_termination("traffic_jam", timestep);
+                cout << "***** Too many traffic jams ***" << endl;
+                break;
+            }
         }
     }
 
@@ -966,6 +1106,8 @@ void WorkstationSystem::save_results()
            << "seed: " << seed << std::endl
            << "solver: " << solver.get_name() << std::endl
            << "station_policy: " << station_policy << std::endl
+           << "pibt_policy: " << pibt_policy << std::endl
+           << "stop_at_traffic_jam: " << (stop_at_traffic_jam ? 1 : 0) << std::endl
            << "time_limit: " << time_limit << std::endl
            << "simulation_window: " << simulation_window << std::endl
            << "planning_window: " << planning_window << std::endl
@@ -975,9 +1117,12 @@ void WorkstationSystem::save_results()
     output.close();
 
     output.open(outfile + "/summary.csv", std::ios::out);
-    output << "service_rate,queue_wait_p95,mean_plan_ms,completed_services,"
+    output << "service_rate,queue_wait_p95,mean_plan_ms,plan_runtime_slope_ms_per_1000_steps,completed_services,"
            << "termination_reason,termination_timestep,terminated_by_traffic_jam,terminated_by_commit_repair_failure,"
-           << "pressure_active_fraction"
+           << "terminated_by_solver_failure,"
+           << "pressure_active_fraction,traffic_jam_fraction,"
+           << "pibt_inheritance_calls,pibt_backtracks,pibt_wait_fallbacks,pibt_pressure_rank_changes"
+           << ",pibt_regret_updates"
            << std::endl;
     auto episode_fraction = [&](int count) {
         if (planning_episodes == 0)
@@ -987,13 +1132,33 @@ void WorkstationSystem::save_results()
     output << compute_service_rate() << ","
            << compute_queue_wait_p95() << ","
            << compute_mean_plan_ms() << ","
+           << compute_plan_runtime_slope() << ","
            << completed_services << ","
            << termination_reason << ","
            << termination_timestep << ","
            << (terminated_by_traffic_jam ? 1 : 0) << ","
            << (terminated_by_commit_repair_failure ? 1 : 0) << ","
-           << episode_fraction(pressure_active_episodes)
+           << (terminated_by_solver_failure ? 1 : 0) << ","
+           << episode_fraction(pressure_active_episodes) << ","
+           << episode_fraction(traffic_jam_episodes) << ","
+           << pibt_inheritance_calls_total << ","
+           << pibt_backtracks_total << ","
+           << pibt_wait_fallbacks_total << ","
+           << pibt_pressure_rank_changes_total << ","
+           << pibt_regret_updates_total
            << std::endl;
+    output.close();
+
+    output.open(outfile + "/planning_runtime.csv", std::ios::out);
+    output << "episode,timestep,plan_ms,pressure_active" << std::endl;
+    for (size_t i = 0; i < mean_plan_ms_samples.size(); i++)
+    {
+        output << i << ","
+               << plan_timestep_samples[i] << ","
+               << mean_plan_ms_samples[i] << ","
+               << pressure_active_samples[i]
+               << std::endl;
+    }
     output.close();
 
     output.open(outfile + "/paths.txt", std::ios::out);
