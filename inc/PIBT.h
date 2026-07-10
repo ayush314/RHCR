@@ -28,7 +28,7 @@ public:
     double exit_bonus = 1;
     double front_bonus = 3;
     double soft_collision_penalty = 0;
-    double pressure_entry_penalty = 1;
+    double pressure_entry_penalty = 2;
 
     uint64_t inheritance_calls = 0;
     uint64_t backtracks = 0;

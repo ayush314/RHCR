@@ -56,7 +56,7 @@ Pressure PIBT keeps the dynamic priority order instead of globally reordering se
 
 Candidate actions are ranked by remaining-goal distance plus pressure-local terms for pressured-zone entry, front-runner progress, exit progress, and waiting. A lightweight hindrance value, based on the preference construction of Okumura et al., breaks ties only during inherited PIBT calls. Pressure changes candidate order but never removes an otherwise valid action; vertex and edge-swap constraints remain hard constraints.
 
-Each pressured station normally admits up to four target-bound agents. The `thirds` profile contracts that limit from four to three at one-third non-service-zone occupancy and from three to two at two-thirds occupancy. If recursive assignment cannot produce a valid move, the implementation attempts a deterministic wait repair and records it in `pibt_wait_fallbacks`. This is a safety repair after assignment fails, not PIBT's normal wait action or an additional planner.
+Each pressured station normally admits up to four target-bound agents. The `thirds` profile contracts that limit from four to three at one-third non-service-zone occupancy and from three to two at two-thirds occupancy. Entering above that soft limit adds a preference cost of `2` by default; it does not prune the move. This balanced setting preserves the high-density throughput gain while preventing the long queues produced by the more aggressive cost of `1`. If recursive assignment cannot produce a valid move, the implementation attempts a deterministic wait repair and records it in `pibt_wait_fallbacks`. This is a safety repair after assignment fails, not PIBT's normal wait action or an additional planner.
 
 The LoRR transfer uses the official 2023 `warehouse_small.map`. The adapter treats LoRR `S` cells as storage pickups and a deterministic spaced subset of `E` cells as serviced workstations. The checked-in sidecar has 342 pickups, 12 workstations, and 783 valid start cells. Regenerate it with:
 
@@ -74,6 +74,7 @@ The main arguments are:
 - `solver`: the windowed MAPF solver (`PBS` or `PIBT`).
 - `station_policy`: the workstation-local PBS policy (`vanilla`, `distance_age`, or `pressure_aware`).
 - `pibt_policy`: the PIBT policy (`vanilla`, `distance_age`, or `pressure`).
+- `pibt_pressure_entry_penalty`: soft action-ranking cost for entering a pressured zone above its admission limit (default `2`).
 - `pibt_pressure_inbound_limit`: the normal target-bound admission limit for a pressured station zone (default `4`).
 - `pibt_pressure_profile`: occupancy-based admission rule (default `thirds`).
 - `pibt_hindrance`: enable the lightweight hindrance tiebreaker (default `true`).
@@ -130,7 +131,7 @@ python3 scripts/aggregate_results.py \
   --root results/pibt_primary_random_preference_h5_seed1to20
 ```
 
-Each run writes `summary.csv` and per-replan `planning_runtime.csv`. Aggregation produces `combined_summary.csv` and `aggregate.csv`. The automated candidate search is in `scripts/auto_research_pibt.py`; rejected configurations and leaderboards belong under `results/_archive` rather than in the primary comparison.
+Each run writes `summary.csv` and per-replan `planning_runtime.csv`. The summary includes completed-wait `queue_wait_p95`, Kaplan-Meier right-censor-aware `queue_wait_km_p95`, and the number of still-waiting agents at the horizon in `active_queue_agents`. Aggregation produces `combined_summary.csv`, `aggregate.csv`, and same-seed pressure-vs-baseline effects with 95% confidence intervals in `paired_comparison.csv`. Batch runs remove large `paths.txt` trajectories after clean runs by default; pass `--keep-paths` only when a trajectory-level diagnosis needs them. The automated candidate search is in `scripts/auto_research_pibt.py`; rejected configurations and leaderboards belong under `results/_archive` rather than in the primary comparison.
 
 References:
 

@@ -26,7 +26,7 @@ DEFAULTS = {
     "pressure_profile": "thirds",
     "inbound_limit": 4,
     "pressure_threshold": 2,
-    "entry_penalty": 1.0,
+    "entry_penalty": 2.0,
     "wait_penalty": 2.0,
     "exit_bonus": 1.0,
     "front_bonus": 3.0,

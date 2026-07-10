@@ -21,6 +21,8 @@ MAP_ORDER = ["alley", "plaza", "lorr_warehouse_small"]
 METRICS = [
     "service_rate",
     "queue_wait_p95",
+    "queue_wait_km_p95",
+    "active_queue_agents",
     "mean_plan_ms",
     "plan_runtime_slope_ms_per_1000_steps",
     "termination_timestep",
@@ -34,6 +36,22 @@ METRICS = [
     "pibt_wait_fallbacks",
     "pibt_pressure_rank_changes",
     "pibt_regret_updates",
+]
+PAIRED_METRICS = [
+    "service_rate",
+    "queue_wait_km_p95",
+    "mean_plan_ms",
+    "pibt_wait_fallbacks",
+]
+PAIRED_COMPARISONS = {
+    "pibt_pressure": ["pibt_vanilla", "pibt_distance_age"],
+}
+T_CRITICAL_95 = [
+    0.0,
+    12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262,
+    2.228, 2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093,
+    2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045,
+    2.042,
 ]
 
 
@@ -62,6 +80,88 @@ def stddev(values: list[float]) -> float:
         return 0.0
     mu = mean(values)
     return math.sqrt(sum((value - mu) ** 2 for value in values) / (len(values) - 1))
+
+
+def metric_values(entries: list[dict[str, str | int | float]], metric: str) -> list[float]:
+    values = [float(row.get(metric, "")) for row in entries if row.get(metric, "") != ""]
+    if metric == "queue_wait_km_p95":
+        values = [value for value in values if value >= 0]
+    return values
+
+
+def ci95_halfwidth(values: list[float]) -> float:
+    if len(values) < 2:
+        return float("nan")
+    degrees_of_freedom = len(values) - 1
+    critical = T_CRITICAL_95[degrees_of_freedom] if degrees_of_freedom < len(T_CRITICAL_95) else 1.96
+    return critical * stddev(values) / math.sqrt(len(values))
+
+
+def paired_comparison_rows(
+    combined_rows: list[dict[str, str | int | float]],
+) -> list[dict[str, str | int | float]]:
+    clean_by_cell: dict[tuple[str, int, str, int], dict[str, str | int | float]] = {}
+    for row in combined_rows:
+        if row["status"] != "clean":
+            continue
+        key = (str(row["map"]), int(row["agent_count"]), str(row["method"]), int(row["seed"]))
+        clean_by_cell[key] = row
+
+    map_counts = sorted(
+        {(key[0], key[1]) for key in clean_by_cell},
+        key=lambda item: (map_sort_key(item[0]), item[1]),
+    )
+    output: list[dict[str, str | int | float]] = []
+    for map_name, agent_count in map_counts:
+        for reference, baselines in PAIRED_COMPARISONS.items():
+            for baseline in baselines:
+                for metric in PAIRED_METRICS:
+                    reference_by_seed = {
+                        seed: row
+                        for (row_map, row_count, method, seed), row in clean_by_cell.items()
+                        if row_map == map_name and row_count == agent_count and method == reference
+                    }
+                    baseline_by_seed = {
+                        seed: row
+                        for (row_map, row_count, method, seed), row in clean_by_cell.items()
+                        if row_map == map_name and row_count == agent_count and method == baseline
+                    }
+                    reference_values: list[float] = []
+                    baseline_values: list[float] = []
+                    for seed in sorted(reference_by_seed.keys() & baseline_by_seed.keys()):
+                        reference_value = reference_by_seed[seed].get(metric, "")
+                        baseline_value = baseline_by_seed[seed].get(metric, "")
+                        if reference_value == "" or baseline_value == "":
+                            continue
+                        reference_float = float(reference_value)
+                        baseline_float = float(baseline_value)
+                        if metric == "queue_wait_km_p95" and (reference_float < 0 or baseline_float < 0):
+                            continue
+                        reference_values.append(reference_float)
+                        baseline_values.append(baseline_float)
+                    if not reference_values:
+                        continue
+                    differences = [
+                        reference_value - baseline_value
+                        for reference_value, baseline_value in zip(reference_values, baseline_values)
+                    ]
+                    baseline_mean = mean(baseline_values)
+                    output.append(
+                        {
+                            "map": map_name,
+                            "agent_count": agent_count,
+                            "reference": reference,
+                            "baseline": baseline,
+                            "metric": metric,
+                            "paired_seed_count": len(differences),
+                            "reference_mean": mean(reference_values),
+                            "baseline_mean": baseline_mean,
+                            "mean_difference": mean(differences),
+                            "relative_difference_percent": "" if baseline_mean == 0 else 100 * mean(differences) / baseline_mean,
+                            "difference_ci95_halfwidth": "" if len(differences) < 2 else ci95_halfwidth(differences),
+                        }
+                    )
+    return output
 
 
 def read_summary(path: Path) -> dict[str, float | str]:
@@ -190,8 +290,8 @@ def main() -> int:
             "failure_reasons": ";".join(failure_reasons),
         }
         for metric in METRICS:
-            values = [float(row.get(metric, "")) for row in clean_entries if row.get(metric, "") != ""]
-            all_values = [float(row.get(metric, "")) for row in entries if row.get(metric, "") != ""]
+            values = metric_values(clean_entries, metric)
+            all_values = metric_values(entries, metric)
             aggregate[metric] = "" if not values else mean(values)
             aggregate[f"{metric}_std"] = "" if not values else stddev(values)
             aggregate[f"{metric}_all"] = "" if not all_values else mean(all_values)
@@ -218,6 +318,25 @@ def main() -> int:
         )
         writer.writeheader()
         writer.writerows(aggregate_rows)
+
+    paired_rows = paired_comparison_rows(combined_rows)
+    with (root / "paired_comparison.csv").open("w", newline="") as fh:
+        fieldnames = [
+            "map",
+            "agent_count",
+            "reference",
+            "baseline",
+            "metric",
+            "paired_seed_count",
+            "reference_mean",
+            "baseline_mean",
+            "mean_difference",
+            "relative_difference_percent",
+            "difference_ci95_halfwidth",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(paired_rows)
 
     return 0
 

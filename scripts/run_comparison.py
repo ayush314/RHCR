@@ -104,7 +104,7 @@ def main() -> int:
     parser.add_argument("--simulation-window", type=int, default=5)
     parser.add_argument("--service-time", type=int, default=3)
     parser.add_argument("--pressure-threshold", type=int)
-    parser.add_argument("--pibt-pressure-entry-penalty", type=float, default=1.0)
+    parser.add_argument("--pibt-pressure-entry-penalty", type=float, default=2.0)
     parser.add_argument("--pibt-pressure-inbound-limit", type=int, default=4)
     parser.add_argument("--pibt-pressure-profile", choices=("none", "half", "severe", "thirds"), default="thirds")
     parser.add_argument("--pibt-wait-penalty", type=float, default=2.0)
@@ -158,6 +158,11 @@ def main() -> int:
         default=list(METHODS.keys()),
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--keep-paths",
+        action="store_true",
+        help="Keep per-agent paths.txt trajectories for clean runs (disabled by default).",
+    )
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -218,6 +223,7 @@ def main() -> int:
             "continue_on_traffic_jam": args.continue_on_traffic_jam,
             "cutoff_time": args.cutoff_time,
             "process_timeout": args.process_timeout,
+            "keep_paths": args.keep_paths,
             "grids": {name: cfg["counts"] for name, cfg in grids.items()},
         },
     )
@@ -237,6 +243,8 @@ def main() -> int:
 
         existing = load_status(status_path)
         if existing and not args.force and existing.get("status") in {"clean", "failed"}:
+            if existing.get("status") == "clean" and not args.keep_paths:
+                (cell_dir / "paths.txt").unlink(missing_ok=True)
             log(f"[reuse] {map_name} {agent_count} {method_name} seed {seed}")
             return
 
@@ -313,6 +321,8 @@ def main() -> int:
                 "output_dir": str(cell_dir),
             },
         )
+        if status == "clean" and not args.keep_paths:
+            (cell_dir / "paths.txt").unlink(missing_ok=True)
         log(f"[done] {map_name} {agent_count} {method_name} seed {seed} -> {status}")
 
     futures = []

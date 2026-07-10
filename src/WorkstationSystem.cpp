@@ -995,6 +995,69 @@ double WorkstationSystem::compute_queue_wait_p95() const
     return percentile(queue_wait_samples, 95);
 }
 
+int WorkstationSystem::compute_active_queue_agents() const
+{
+    int count = 0;
+    for (const auto& agent : workstation_agents)
+    {
+        if (agent.phase == WorkstationRuntimePhase::TO_STATION &&
+            !agent.tasks.empty() && agent.tasks.front().boundary_t >= 0)
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+double WorkstationSystem::compute_queue_wait_km_p95() const
+{
+    vector<pair<int, bool>> observations;
+    observations.reserve(queue_wait_samples.size() + workstation_agents.size());
+    for (int wait : queue_wait_samples)
+        observations.emplace_back(wait, true);
+
+    const int observation_t = termination_timestep >= 0 ? termination_timestep : timestep;
+    for (const auto& agent : workstation_agents)
+    {
+        if (agent.phase != WorkstationRuntimePhase::TO_STATION || agent.tasks.empty())
+            continue;
+        int boundary_t = agent.tasks.front().boundary_t;
+        if (boundary_t >= 0)
+            observations.emplace_back(std::max(0, observation_t - boundary_t), false);
+    }
+    if (observations.empty())
+        return 0;
+
+    std::sort(observations.begin(), observations.end());
+    int at_risk = observations.size();
+    double survival = 1.0;
+    size_t index = 0;
+    while (index < observations.size())
+    {
+        int duration = observations[index].first;
+        int events = 0;
+        int censored = 0;
+        while (index < observations.size() && observations[index].first == duration)
+        {
+            if (observations[index].second)
+                events++;
+            else
+                censored++;
+            index++;
+        }
+        if (events > 0 && at_risk > 0)
+        {
+            survival *= 1.0 - static_cast<double>(events) / at_risk;
+            if (1.0 - survival >= 0.95)
+                return duration;
+        }
+        at_risk -= events + censored;
+    }
+
+    // The percentile is beyond the observation horizon when survival stays above 5%.
+    return -1;
+}
+
 double WorkstationSystem::compute_mean_plan_ms() const
 {
     if (mean_plan_ms_samples.empty())
@@ -1114,10 +1177,29 @@ void WorkstationSystem::save_results()
            << "simulation_time: " << simulation_time << std::endl
            << "service_time: " << workstation_service_time << std::endl
            << "pressure_threshold: " << effective_pressure_threshold(workstation_pressure_threshold) << std::endl;
+    if (const auto* pibt = dynamic_cast<const PIBT*>(&solver))
+    {
+        output << "pibt_pressure_profile: " << pibt->pressure_profile << std::endl
+               << "pibt_pressure_entry_penalty: " << pibt->pressure_entry_penalty << std::endl
+               << "pibt_pressure_inbound_limit: " << pibt->pressure_inbound_limit << std::endl
+               << "pibt_wait_penalty: " << pibt->wait_penalty << std::endl
+               << "pibt_exit_bonus: " << pibt->exit_bonus << std::endl
+               << "pibt_front_bonus: " << pibt->front_bonus << std::endl
+               << "pibt_soft_collision_penalty: " << pibt->soft_collision_penalty << std::endl
+               << "pibt_hindrance: " << (pibt->hindrance_tiebreak ? 1 : 0) << std::endl
+               << "pibt_hindrance_scope: " << pibt->hindrance_scope << std::endl
+               << "pibt_front_priority: " << (pibt->front_priority_enabled ? 1 : 0) << std::endl
+               << "pibt_phase_priority: " << (pibt->phase_priority_enabled ? 1 : 0) << std::endl
+               << "pibt_random_tiebreak: " << (pibt->random_tiebreak ? 1 : 0) << std::endl
+               << "pibt_regret_iterations: " << pibt->regret_iterations << std::endl
+               << "pibt_regret_weight: " << pibt->regret_weight << std::endl
+               << "pibt_regret_scope: " << pibt->regret_scope << std::endl;
+    }
     output.close();
 
     output.open(outfile + "/summary.csv", std::ios::out);
-    output << "service_rate,queue_wait_p95,mean_plan_ms,plan_runtime_slope_ms_per_1000_steps,completed_services,"
+    output << "service_rate,queue_wait_p95,queue_wait_km_p95,active_queue_agents,"
+           << "mean_plan_ms,plan_runtime_slope_ms_per_1000_steps,completed_services,"
            << "termination_reason,termination_timestep,terminated_by_traffic_jam,terminated_by_commit_repair_failure,"
            << "terminated_by_solver_failure,"
            << "pressure_active_fraction,traffic_jam_fraction,"
@@ -1131,6 +1213,8 @@ void WorkstationSystem::save_results()
     };
     output << compute_service_rate() << ","
            << compute_queue_wait_p95() << ","
+           << compute_queue_wait_km_p95() << ","
+           << compute_active_queue_agents() << ","
            << compute_mean_plan_ms() << ","
            << compute_plan_runtime_slope() << ","
            << completed_services << ","

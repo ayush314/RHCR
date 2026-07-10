@@ -99,6 +99,8 @@ private:
     bool validate_move(int agent_id, const State& prev, const State& curr) const;
     double compute_service_rate() const;
     double compute_queue_wait_p95() const;
+    double compute_queue_wait_km_p95() const;
+    int compute_active_queue_agents() const;
     double compute_mean_plan_ms() const;
     double compute_plan_runtime_slope() const;
 };
