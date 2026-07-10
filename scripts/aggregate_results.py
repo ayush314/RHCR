@@ -36,6 +36,7 @@ METRICS = [
     "pibt_inheritance_calls",
     "pibt_backtracks",
     "pibt_wait_fallbacks",
+    "pibt_wait_fallback_rate_per_1000_agent_steps",
     "pibt_pressure_rank_changes",
     "pibt_regret_updates",
 ]
@@ -44,6 +45,7 @@ PAIRED_METRICS = [
     "queue_wait_km_p95",
     "mean_plan_ms",
     "pibt_wait_fallbacks",
+    "pibt_wait_fallback_rate_per_1000_agent_steps",
 ]
 PAIRED_COMPARISONS = {
     "pibt_pressure": ["pibt_vanilla", "pibt_distance_age"],
@@ -246,6 +248,29 @@ def filter_manifest_cells(
     ]
 
 
+def derive_fallback_rate(
+    rows: list[dict[str, str | int | float]],
+    manifest_path: Path,
+) -> None:
+    if not manifest_path.exists():
+        return
+    manifest = json.loads(manifest_path.read_text())
+    simulation_window = int(manifest.get("simulation_window", 0))
+    planning_window = int(manifest.get("planning_window", 0))
+    if simulation_window <= 0 or planning_window <= 0:
+        return
+    for row in rows:
+        fallbacks = row.get("pibt_wait_fallbacks", "")
+        termination_timestep = row.get("termination_timestep", "")
+        if fallbacks == "" or termination_timestep == "":
+            continue
+        planning_episodes = max(1, math.ceil(float(termination_timestep) / simulation_window))
+        planned_agent_steps = planning_episodes * int(row["agent_count"]) * planning_window
+        row["pibt_wait_fallback_rate_per_1000_agent_steps"] = (
+            1000.0 * float(fallbacks) / planned_agent_steps
+        )
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Aggregate workstation comparison results.")
@@ -264,6 +289,7 @@ def main() -> int:
     combined_rows = filter_manifest_cells(combined_rows, root / "run_manifest.json")
     if not combined_rows:
         raise SystemExit(f"No result cells under {root} match its run_manifest.json")
+    derive_fallback_rate(combined_rows, root / "run_manifest.json")
 
     combined_rows.sort(
         key=lambda row: (

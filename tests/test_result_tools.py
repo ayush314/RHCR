@@ -35,6 +35,21 @@ class AggregateResultsTests(unittest.TestCase):
     def test_paired_ci_is_zero_for_identical_differences(self) -> None:
         self.assertEqual(aggregate_results.ci95_halfwidth([2.0, 2.0, 2.0]), 0.0)
 
+    def test_fallback_rate_normalizes_planned_agent_steps(self) -> None:
+        rows = [
+            {
+                "agent_count": 100,
+                "termination_timestep": 500,
+                "pibt_wait_fallbacks": 200,
+            }
+        ]
+        manifest = {"simulation_window": 5, "planning_window": 20}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "run_manifest.json"
+            manifest_path.write_text(json.dumps(manifest))
+            aggregate_results.derive_fallback_rate(rows, manifest_path)
+        self.assertEqual(rows[0]["pibt_wait_fallback_rate_per_1000_agent_steps"], 1.0)
+
 
 class RunComparisonTests(unittest.TestCase):
     def test_benchmark_fingerprint_includes_movingai_dependency(self) -> None:
