@@ -4,6 +4,8 @@
   "source": "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/2023%20Competition/Example%20Instances/warehouse.domain/maps/warehouse_small.map",
   "source_sha256": "8b7e0c65f0c38c49c742278ae35123f1c3f02d5069ca22a560fe199bd8c8d1ad",
   "adapter_station_count": 12,
+  "adapter_station_layout": "balanced_perimeter",
+  "adapter_queue_layout": "inward_lane_3",
   "rows": 33,
   "cols": 57,
   "movingai_map": "warehouse_small.map",
@@ -1388,274 +1390,82 @@
   "stations": [
     {
       "station_id": 0,
+      "perimeter_side": "top",
       "workstation_cell": [
-        9,
+        12,
         1
       ],
       "standby_cells": [
         [
-          9,
-          0
-        ],
-        [
-          9,
+          12,
           2
-        ],
-        [
-          10,
-          1
         ]
       ],
       "buffer_cells": [
         [
-          9,
+          12,
           3
-        ],
-        [
-          10,
-          0
-        ],
-        [
-          10,
-          2
-        ],
-        [
-          11,
-          1
         ]
       ],
       "approach_cells": [
         [
-          8,
-          3
-        ],
-        [
-          9,
-          4
-        ],
-        [
-          10,
-          3
-        ],
-        [
-          11,
-          0
-        ],
-        [
-          11,
-          2
-        ],
-        [
           12,
-          1
+          4
         ]
       ],
       "exit_cells": [
         [
-          9,
-          0
-        ],
-        [
-          9,
-          2
-        ],
-        [
-          10,
+          11,
           1
         ]
       ]
     },
     {
       "station_id": 1,
+      "perimeter_side": "top",
       "workstation_cell": [
-        19,
+        26,
         1
       ],
       "standby_cells": [
         [
-          18,
-          1
-        ],
-        [
-          19,
-          0
-        ],
-        [
-          19,
+          26,
           2
         ]
       ],
       "buffer_cells": [
         [
-          17,
-          1
-        ],
-        [
-          18,
-          0
-        ],
-        [
-          18,
-          2
-        ],
-        [
-          19,
+          26,
           3
         ]
       ],
       "approach_cells": [
         [
-          16,
-          1
-        ],
-        [
-          17,
-          0
-        ],
-        [
-          17,
-          2
-        ],
-        [
-          18,
-          3
-        ],
-        [
-          19,
+          26,
           4
-        ],
-        [
-          20,
-          3
         ]
       ],
       "exit_cells": [
         [
-          18,
+          25,
           1
-        ],
-        [
-          19,
-          0
-        ],
-        [
-          19,
-          2
         ]
       ]
     },
     {
       "station_id": 2,
-      "workstation_cell": [
-        30,
-        1
-      ],
-      "standby_cells": [
-        [
-          30,
-          0
-        ],
-        [
-          30,
-          2
-        ],
-        [
-          31,
-          1
-        ]
-      ],
-      "buffer_cells": [
-        [
-          30,
-          3
-        ],
-        [
-          31,
-          0
-        ],
-        [
-          31,
-          2
-        ],
-        [
-          32,
-          1
-        ]
-      ],
-      "approach_cells": [
-        [
-          29,
-          3
-        ],
-        [
-          30,
-          4
-        ],
-        [
-          31,
-          3
-        ],
-        [
-          32,
-          0
-        ],
-        [
-          32,
-          2
-        ],
-        [
-          33,
-          1
-        ]
-      ],
-      "exit_cells": [
-        [
-          30,
-          0
-        ],
-        [
-          30,
-          2
-        ],
-        [
-          31,
-          1
-        ]
-      ]
-    },
-    {
-      "station_id": 3,
+      "perimeter_side": "top",
       "workstation_cell": [
         40,
         1
       ],
       "standby_cells": [
         [
-          39,
-          1
-        ],
-        [
-          40,
-          0
-        ],
-        [
           40,
           2
         ]
       ],
       "buffer_cells": [
-        [
-          38,
-          1
-        ],
-        [
-          39,
-          0
-        ],
-        [
-          39,
-          2
-        ],
         [
           40,
           3
@@ -1663,173 +1473,20 @@
       ],
       "approach_cells": [
         [
-          37,
-          1
-        ],
-        [
-          38,
-          0
-        ],
-        [
-          38,
-          2
-        ],
-        [
-          39,
-          3
-        ],
-        [
           40,
           4
-        ],
-        [
-          41,
-          3
         ]
       ],
       "exit_cells": [
         [
           39,
           1
-        ],
-        [
-          40,
-          0
-        ],
-        [
-          40,
-          2
         ]
       ]
     },
     {
-      "station_id": 4,
-      "workstation_cell": [
-        51,
-        1
-      ],
-      "standby_cells": [
-        [
-          51,
-          0
-        ],
-        [
-          51,
-          2
-        ],
-        [
-          52,
-          1
-        ]
-      ],
-      "buffer_cells": [
-        [
-          51,
-          3
-        ],
-        [
-          52,
-          0
-        ],
-        [
-          52,
-          2
-        ]
-      ],
-      "approach_cells": [
-        [
-          50,
-          3
-        ],
-        [
-          51,
-          4
-        ],
-        [
-          52,
-          3
-        ]
-      ],
-      "exit_cells": [
-        [
-          51,
-          0
-        ],
-        [
-          51,
-          2
-        ],
-        [
-          52,
-          1
-        ]
-      ]
-    },
-    {
-      "station_id": 5,
-      "workstation_cell": [
-        1,
-        5
-      ],
-      "standby_cells": [
-        [
-          0,
-          5
-        ],
-        [
-          1,
-          4
-        ],
-        [
-          2,
-          5
-        ]
-      ],
-      "buffer_cells": [
-        [
-          0,
-          4
-        ],
-        [
-          2,
-          4
-        ],
-        [
-          3,
-          5
-        ]
-      ],
-      "approach_cells": [
-        [
-          3,
-          4
-        ],
-        [
-          3,
-          6
-        ],
-        [
-          4,
-          5
-        ]
-      ],
-      "exit_cells": [
-        [
-          0,
-          5
-        ],
-        [
-          1,
-          4
-        ],
-        [
-          2,
-          5
-        ]
-      ]
-    },
-    {
-      "station_id": 6,
+      "station_id": 3,
+      "perimeter_side": "right",
       "workstation_cell": [
         55,
         9
@@ -1838,108 +1495,201 @@
         [
           54,
           9
-        ],
-        [
-          55,
-          8
-        ],
-        [
-          56,
-          9
         ]
       ],
       "buffer_cells": [
         [
           53,
           9
-        ],
-        [
-          54,
-          8
-        ],
-        [
-          55,
-          7
-        ],
-        [
-          56,
-          8
         ]
       ],
       "approach_cells": [
         [
           52,
           9
-        ],
-        [
-          53,
-          8
-        ],
-        [
-          53,
-          10
-        ],
-        [
-          54,
-          7
-        ],
-        [
-          55,
-          6
-        ],
-        [
-          56,
-          7
         ]
       ],
       "exit_cells": [
         [
-          54,
-          9
-        ],
-        [
           55,
           8
-        ],
+        ]
+      ]
+    },
+    {
+      "station_id": 4,
+      "perimeter_side": "right",
+      "workstation_cell": [
+        55,
+        16
+      ],
+      "standby_cells": [
         [
-          56,
-          9
+          54,
+          16
+        ]
+      ],
+      "buffer_cells": [
+        [
+          53,
+          16
+        ]
+      ],
+      "approach_cells": [
+        [
+          52,
+          16
+        ]
+      ],
+      "exit_cells": [
+        [
+          55,
+          15
+        ]
+      ]
+    },
+    {
+      "station_id": 5,
+      "perimeter_side": "right",
+      "workstation_cell": [
+        55,
+        23
+      ],
+      "standby_cells": [
+        [
+          54,
+          23
+        ]
+      ],
+      "buffer_cells": [
+        [
+          53,
+          23
+        ]
+      ],
+      "approach_cells": [
+        [
+          52,
+          23
+        ]
+      ],
+      "exit_cells": [
+        [
+          55,
+          22
+        ]
+      ]
+    },
+    {
+      "station_id": 6,
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        40,
+        31
+      ],
+      "standby_cells": [
+        [
+          40,
+          30
+        ]
+      ],
+      "buffer_cells": [
+        [
+          40,
+          29
+        ]
+      ],
+      "approach_cells": [
+        [
+          40,
+          28
+        ]
+      ],
+      "exit_cells": [
+        [
+          39,
+          31
         ]
       ]
     },
     {
       "station_id": 7,
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        26,
+        31
+      ],
+      "standby_cells": [
+        [
+          26,
+          30
+        ]
+      ],
+      "buffer_cells": [
+        [
+          26,
+          29
+        ]
+      ],
+      "approach_cells": [
+        [
+          26,
+          28
+        ]
+      ],
+      "exit_cells": [
+        [
+          25,
+          31
+        ]
+      ]
+    },
+    {
+      "station_id": 8,
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        12,
+        31
+      ],
+      "standby_cells": [
+        [
+          12,
+          30
+        ]
+      ],
+      "buffer_cells": [
+        [
+          12,
+          29
+        ]
+      ],
+      "approach_cells": [
+        [
+          12,
+          28
+        ]
+      ],
+      "exit_cells": [
+        [
+          11,
+          31
+        ]
+      ]
+    },
+    {
+      "station_id": 9,
+      "perimeter_side": "left",
       "workstation_cell": [
         1,
         23
       ],
       "standby_cells": [
         [
-          0,
-          23
-        ],
-        [
-          1,
-          24
-        ],
-        [
           2,
           23
         ]
       ],
       "buffer_cells": [
-        [
-          0,
-          24
-        ],
-        [
-          1,
-          25
-        ],
-        [
-          2,
-          24
-        ],
         [
           3,
           23
@@ -1947,326 +1697,78 @@
       ],
       "approach_cells": [
         [
-          0,
-          25
-        ],
-        [
-          1,
-          26
-        ],
-        [
-          2,
-          25
-        ],
-        [
-          3,
-          22
-        ],
-        [
-          3,
-          24
-        ],
-        [
           4,
           23
         ]
       ],
       "exit_cells": [
-        [
-          0,
-          23
-        ],
         [
           1,
           24
-        ],
-        [
-          2,
-          23
-        ]
-      ]
-    },
-    {
-      "station_id": 8,
-      "workstation_cell": [
-        55,
-        27
-      ],
-      "standby_cells": [
-        [
-          54,
-          27
-        ],
-        [
-          55,
-          28
-        ],
-        [
-          56,
-          27
-        ]
-      ],
-      "buffer_cells": [
-        [
-          53,
-          27
-        ],
-        [
-          54,
-          28
-        ],
-        [
-          56,
-          28
-        ]
-      ],
-      "approach_cells": [
-        [
-          52,
-          27
-        ],
-        [
-          53,
-          26
-        ],
-        [
-          53,
-          28
-        ]
-      ],
-      "exit_cells": [
-        [
-          54,
-          27
-        ],
-        [
-          55,
-          28
-        ],
-        [
-          56,
-          27
-        ]
-      ]
-    },
-    {
-      "station_id": 9,
-      "workstation_cell": [
-        5,
-        31
-      ],
-      "standby_cells": [
-        [
-          4,
-          31
-        ],
-        [
-          5,
-          30
-        ],
-        [
-          5,
-          32
-        ]
-      ],
-      "buffer_cells": [
-        [
-          4,
-          30
-        ],
-        [
-          4,
-          32
-        ],
-        [
-          5,
-          29
-        ]
-      ],
-      "approach_cells": [
-        [
-          4,
-          29
-        ],
-        [
-          5,
-          28
-        ],
-        [
-          6,
-          29
-        ]
-      ],
-      "exit_cells": [
-        [
-          4,
-          31
-        ],
-        [
-          5,
-          30
-        ],
-        [
-          5,
-          32
         ]
       ]
     },
     {
       "station_id": 10,
+      "perimeter_side": "left",
       "workstation_cell": [
-        16,
-        31
+        1,
+        16
       ],
       "standby_cells": [
         [
-          16,
-          30
-        ],
-        [
-          16,
-          32
-        ],
-        [
-          17,
-          31
+          2,
+          16
         ]
       ],
       "buffer_cells": [
         [
-          16,
-          29
-        ],
-        [
-          17,
-          30
-        ],
-        [
-          17,
-          32
-        ],
-        [
-          18,
-          31
+          3,
+          16
         ]
       ],
       "approach_cells": [
         [
-          15,
-          29
-        ],
-        [
-          16,
-          28
-        ],
-        [
-          17,
-          29
-        ],
-        [
-          18,
-          30
-        ],
-        [
-          18,
-          32
-        ],
-        [
-          19,
-          31
+          4,
+          16
         ]
       ],
       "exit_cells": [
         [
-          16,
-          30
-        ],
-        [
-          16,
-          32
-        ],
-        [
-          17,
-          31
+          1,
+          17
         ]
       ]
     },
     {
       "station_id": 11,
+      "perimeter_side": "left",
       "workstation_cell": [
-        37,
-        31
+        1,
+        9
       ],
       "standby_cells": [
         [
-          37,
-          30
-        ],
-        [
-          37,
-          32
-        ],
-        [
-          38,
-          31
+          2,
+          9
         ]
       ],
       "buffer_cells": [
         [
-          37,
-          29
-        ],
-        [
-          38,
-          30
-        ],
-        [
-          38,
-          32
-        ],
-        [
-          39,
-          31
+          3,
+          9
         ]
       ],
       "approach_cells": [
         [
-          36,
-          29
-        ],
-        [
-          37,
-          28
-        ],
-        [
-          38,
-          29
-        ],
-        [
-          39,
-          30
-        ],
-        [
-          39,
-          32
-        ],
-        [
-          40,
-          31
+          4,
+          9
         ]
       ],
       "exit_cells": [
         [
-          37,
-          30
-        ],
-        [
-          37,
-          32
-        ],
-        [
-          38,
-          31
+          1,
+          10
         ]
       ]
     }

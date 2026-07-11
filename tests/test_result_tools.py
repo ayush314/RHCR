@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 
@@ -119,6 +120,35 @@ class RunComparisonTests(unittest.TestCase):
 
 
 class LorrAdapterTests(unittest.TestCase):
+    def assert_directional_station_layout(self, benchmark: dict, per_side: int) -> None:
+        self.assertEqual(benchmark["adapter_station_layout"], "balanced_perimeter")
+        self.assertEqual(benchmark["adapter_queue_layout"], "inward_lane_3")
+        self.assertEqual(
+            Counter(station["perimeter_side"] for station in benchmark["stations"]),
+            Counter({"top": per_side, "right": per_side, "bottom": per_side, "left": per_side}),
+        )
+        occupied: set[tuple[int, int]] = set()
+        for station in benchmark["stations"]:
+            workstation = tuple(station["workstation_cell"])
+            approach = {tuple(cell) for cell in station["approach_cells"]}
+            buffer_cells = {tuple(cell) for cell in station["buffer_cells"]}
+            standby = {tuple(cell) for cell in station["standby_cells"]}
+            exits = {tuple(cell) for cell in station["exit_cells"]}
+            self.assertEqual((len(approach), len(buffer_cells), len(standby), len(exits)), (1, 1, 1, 1))
+            approach_cell = next(iter(approach))
+            buffer_cell = next(iter(buffer_cells))
+            standby_cell = next(iter(standby))
+            exit_cell = next(iter(exits))
+            manhattan = lambda first, second: abs(first[0] - second[0]) + abs(first[1] - second[1])
+            self.assertEqual(manhattan(approach_cell, buffer_cell), 1)
+            self.assertEqual(manhattan(buffer_cell, standby_cell), 1)
+            self.assertEqual(manhattan(standby_cell, workstation), 1)
+            self.assertEqual(manhattan(exit_cell, workstation), 1)
+            station_cells = {workstation} | approach | buffer_cells | standby | exits
+            self.assertEqual(len(station_cells), 5)
+            self.assertFalse(occupied & station_cells)
+            occupied.update(station_cells)
+
     def test_spaced_selection_matches_reference_farthest_point_rule(self) -> None:
         candidates = [(x, y) for y in range(4) for x in range(7)]
         expected = [min(candidates)]
@@ -157,6 +187,7 @@ class LorrAdapterTests(unittest.TestCase):
             description,
         )
         self.assertEqual(generated, json.loads(sidecar_path.read_text()))
+        self.assert_directional_station_layout(generated, 3)
 
         _rows, _cols, grid = import_lorr_workstation.read_movingai_map(map_path)
         traversable = sum(import_lorr_workstation.traversable(cell) for row in grid for cell in row)
@@ -165,7 +196,7 @@ class LorrAdapterTests(unittest.TestCase):
             reserved.add(tuple(station["workstation_cell"]))
             for field in ("standby_cells", "buffer_cells", "approach_cells", "exit_cells"):
                 reserved.update(tuple(cell) for cell in station[field])
-        self.assertEqual(traversable - len(reserved), 870)
+        self.assertEqual(traversable - len(reserved), 987)
 
     def test_sortation_medium_sidecar_is_reproducible_and_has_expected_capacity(self) -> None:
         map_path = REPO_ROOT / "benchmarks" / "lorr" / "sortation_medium.map"
@@ -186,6 +217,7 @@ class LorrAdapterTests(unittest.TestCase):
             512,
         )
         self.assertEqual(generated, json.loads(sidecar_path.read_text()))
+        self.assert_directional_station_layout(generated, 6)
 
         _rows, _cols, grid = import_lorr_workstation.read_movingai_map(map_path)
         traversable = sum(import_lorr_workstation.traversable(cell) for row in grid for cell in row)
@@ -194,7 +226,29 @@ class LorrAdapterTests(unittest.TestCase):
             reserved.add(tuple(station["workstation_cell"]))
             for field in ("standby_cells", "buffer_cells", "approach_cells", "exit_cells"):
                 reserved.update(tuple(cell) for cell in station[field])
-        self.assertEqual(traversable - len(reserved), 21030)
+        self.assertEqual(traversable - len(reserved), 21288)
+
+    def test_warehouse_sidecar_has_balanced_directional_stations(self) -> None:
+        map_path = REPO_ROOT / "benchmarks" / "lorr" / "warehouse_small.map"
+        sidecar_path = REPO_ROOT / "benchmarks" / "lorr" / "warehouse_small.json"
+        expected = json.loads(sidecar_path.read_text())
+        generated = import_lorr_workstation.build_benchmark(
+            map_path,
+            12,
+            expected["source"],
+            expected["description"],
+        )
+        self.assertEqual(generated, expected)
+        self.assert_directional_station_layout(generated, 3)
+
+        _rows, _cols, grid = import_lorr_workstation.read_movingai_map(map_path)
+        traversable = sum(import_lorr_workstation.traversable(cell) for row in grid for cell in row)
+        reserved = {tuple(cell) for cell in generated["pickup_endpoints"]}
+        for station in generated["stations"]:
+            reserved.add(tuple(station["workstation_cell"]))
+            for field in ("standby_cells", "buffer_cells", "approach_cells", "exit_cells"):
+                reserved.update(tuple(cell) for cell in station[field])
+        self.assertEqual(traversable - len(reserved), 875)
 
 
 if __name__ == "__main__":

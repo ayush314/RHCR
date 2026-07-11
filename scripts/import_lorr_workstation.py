@@ -5,7 +5,6 @@ import argparse
 import hashlib
 import json
 import os
-from collections import deque
 from pathlib import Path
 
 
@@ -23,31 +22,6 @@ def read_movingai_map(path: Path) -> tuple[int, int, list[str]]:
 
 def traversable(cell: str) -> bool:
     return cell not in "@OTW"
-
-
-def graph_layers(grid: list[str], start: tuple[int, int], radius: int) -> dict[int, list[tuple[int, int]]]:
-    rows = len(grid)
-    cols = len(grid[0])
-    distances = {start: 0}
-    queue = deque([start])
-    while queue:
-        x, y = queue.popleft()
-        distance = distances[(x, y)]
-        if distance == radius:
-            continue
-        for dx, dy in ((1, 0), (0, -1), (-1, 0), (0, 1)):
-            nxt = (x + dx, y + dy)
-            nx, ny = nxt
-            if not (0 <= nx < cols and 0 <= ny < rows):
-                continue
-            if nxt in distances or not traversable(grid[ny][nx]):
-                continue
-            distances[nxt] = distance + 1
-            queue.append(nxt)
-    return {
-        layer: sorted(cell for cell, distance in distances.items() if distance == layer)
-        for layer in range(1, radius + 1)
-    }
 
 
 def select_spaced(candidates: list[tuple[int, int]], count: int) -> list[tuple[int, int]]:
@@ -77,6 +51,126 @@ def select_spaced(candidates: list[tuple[int, int]], count: int) -> list[tuple[i
     return sorted(selected, key=lambda cell: (cell[1], cell[0]))
 
 
+SIDE_ORDER = ("top", "right", "bottom", "left")
+
+
+def perimeter_side(cell: tuple[int, int], rows: int, cols: int) -> str:
+    x, y = cell
+    distances = {
+        "top": y,
+        "right": cols - 1 - x,
+        "bottom": rows - 1 - y,
+        "left": x,
+    }
+    return min(SIDE_ORDER, key=lambda side: (distances[side], SIDE_ORDER.index(side)))
+
+
+def select_balanced_perimeter(
+    candidates: list[tuple[int, int]],
+    count: int,
+    rows: int,
+    cols: int,
+) -> list[tuple[tuple[int, int], str]]:
+    if count % len(SIDE_ORDER) != 0:
+        raise ValueError("balanced perimeter station count must be divisible by four")
+    per_side = count // len(SIDE_ORDER)
+    grouped = {side: [] for side in SIDE_ORDER}
+    for cell in candidates:
+        grouped[perimeter_side(cell, rows, cols)].append(cell)
+
+    selected_by_side: dict[str, list[tuple[int, int]]] = {}
+    for side in SIDE_ORDER:
+        available = set(grouped[side])
+        if len(available) < per_side:
+            raise ValueError(f"not enough {side} emitters for {per_side} stations")
+        axis_limit = cols - 1 if side in {"top", "bottom"} else rows - 1
+        axis = (lambda cell: cell[0]) if side in {"top", "bottom"} else (lambda cell: cell[1])
+        selected = []
+        for index in range(per_side):
+            target = (index + 1) * axis_limit / (per_side + 1)
+            cell = min(
+                available,
+                key=lambda candidate: (
+                    abs(axis(candidate) - target),
+                    axis(candidate),
+                    candidate[1],
+                    candidate[0],
+                ),
+            )
+            selected.append(cell)
+            available.remove(cell)
+        selected_by_side[side] = selected
+
+    clockwise = {
+        "top": sorted(selected_by_side["top"], key=lambda cell: cell[0]),
+        "right": sorted(selected_by_side["right"], key=lambda cell: cell[1]),
+        "bottom": sorted(selected_by_side["bottom"], key=lambda cell: cell[0], reverse=True),
+        "left": sorted(selected_by_side["left"], key=lambda cell: cell[1], reverse=True),
+    }
+    return [(cell, side) for side in SIDE_ORDER for cell in clockwise[side]]
+
+
+def add(cell: tuple[int, int], direction: tuple[int, int], distance: int = 1) -> tuple[int, int]:
+    return cell[0] + distance * direction[0], cell[1] + distance * direction[1]
+
+
+def build_directional_stations(
+    grid: list[str],
+    selected: list[tuple[tuple[int, int], str]],
+    pickups: list[tuple[int, int]],
+) -> list[dict]:
+    rows = len(grid)
+    cols = len(grid[0])
+    inward = {
+        "top": (0, 1),
+        "right": (-1, 0),
+        "bottom": (0, -1),
+        "left": (1, 0),
+    }
+    clockwise_tangent = {
+        "top": (1, 0),
+        "right": (0, 1),
+        "bottom": (-1, 0),
+        "left": (0, -1),
+    }
+
+    def usable(cell: tuple[int, int]) -> bool:
+        x, y = cell
+        return 0 <= x < cols and 0 <= y < rows and traversable(grid[y][x])
+
+    workstations = {cell for cell, _side in selected}
+    claimed = set(pickups) | workstations
+    stations = []
+    for station_id, (workstation, side) in enumerate(selected):
+        lane = [add(workstation, inward[side], distance) for distance in range(1, 4)]
+        if any(not usable(cell) for cell in lane):
+            raise ValueError(f"station {workstation} has a blocked inward queue lane")
+        if any(cell in claimed for cell in lane):
+            raise ValueError(f"station {workstation} has an overlapping inward queue lane")
+        claimed.update(lane)
+
+        tangent = clockwise_tangent[side]
+        exit_candidates = [add(workstation, tangent), add(workstation, (-tangent[0], -tangent[1]))]
+        exit_cell = next(
+            (cell for cell in exit_candidates if usable(cell) and cell not in claimed),
+            None,
+        )
+        if exit_cell is None:
+            raise ValueError(f"station {workstation} has no separate lateral exit")
+        claimed.add(exit_cell)
+
+        stations.append({
+            "station_id": station_id,
+            "perimeter_side": side,
+            "workstation_cell": list(workstation),
+            "standby_cells": [list(lane[0])],
+            "buffer_cells": [list(lane[1])],
+            "approach_cells": [list(lane[2])],
+            "exit_cells": [list(exit_cell)],
+        })
+    return stations
+
+
 def build_benchmark(
     source: Path,
     station_count: int,
@@ -99,27 +193,8 @@ def build_benchmark(
     ]
     if pickup_count is not None:
         pickups = select_spaced(pickups, pickup_count)
-    workstations = select_spaced(emitters, station_count)
-    stations = []
-    claimed = set(workstations)
-    for station_id, workstation in enumerate(workstations):
-        layers = graph_layers(grid, workstation, 3)
-        station_layers = {}
-        for layer in range(1, 4):
-            cells = [cell for cell in layers[layer] if cell not in claimed and cell not in pickups]
-            station_layers[layer] = cells
-            claimed.update(cells)
-        exits = station_layers[1]
-        if not exits:
-            raise ValueError(f"Workstation {workstation} has no unclaimed exit cell")
-        stations.append({
-            "station_id": station_id,
-            "workstation_cell": list(workstation),
-            "standby_cells": [list(cell) for cell in station_layers[1]],
-            "buffer_cells": [list(cell) for cell in station_layers[2]],
-            "approach_cells": [list(cell) for cell in station_layers[3]],
-            "exit_cells": [list(cell) for cell in exits],
-        })
+    selected = select_balanced_perimeter(emitters, station_count, rows, cols)
+    stations = build_directional_stations(grid, selected, pickups)
 
     benchmark = {
         "benchmark_id": f"lorr_{source.stem}",
@@ -127,6 +202,8 @@ def build_benchmark(
         "source": source_url,
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "adapter_station_count": station_count,
+        "adapter_station_layout": "balanced_perimeter",
+        "adapter_queue_layout": "inward_lane_3",
         "rows": rows,
         "cols": cols,
         "movingai_map": source.name,

@@ -42,7 +42,7 @@ The scalable PIBT comparison uses:
   --benchmark benchmarks/lorr/warehouse_small.json \
   --solver PIBT \
   --pibt_policy pressure \
-  --agentNum 783 \
+  --agentNum 875 \
   --simulation_time 500 \
   --simulation_window 5 \
   --planning_window 20 \
@@ -60,7 +60,7 @@ Candidate actions are ranked by remaining-goal distance plus pressure-local term
 
 Each pressured station normally admits up to four target-bound agents. The `thirds` profile contracts that limit from four to three at one-third non-service-zone occupancy and from three to two at two-thirds occupancy. Entering above that soft limit adds a preference cost of `2` by default; it does not prune the move. This balanced setting preserves the high-density throughput gain while preventing the long queues produced by the more aggressive cost of `1`. If recursive assignment cannot produce a valid move, the implementation attempts a deterministic wait repair and records it in `pibt_wait_fallbacks`. This is a safety repair after assignment fails, not PIBT's normal wait action or an additional planner.
 
-The LoRR transfer uses the official 2023 `warehouse_small.map` evaluation map and `sortation_small.map`/`sortation_medium.map` problem-generator maps. The adapter treats LoRR `S` cells as storage pickups and a deterministic spaced subset of `E` cells as serviced workstations. The checked-in small sidecars have 342/517 pickups, 12 workstations, and 783/870 valid start cells. The medium scaling sidecar deterministically samples 512 of its 12,096 storage cells, uses 24 workstations, and leaves 21,030 valid starts; pickup sampling bounds heuristic memory without changing the map geometry. All Sortation runs use the same pressure parameters fixed on the earlier maps, with no map-specific retuning. Regenerate the sidecars with:
+The LoRR transfer uses the official 2023 `warehouse_small.map` evaluation map and `sortation_small.map`/`sortation_medium.map` problem-generator maps. The adapter treats LoRR `S` cells as storage pickups and a balanced subset of perimeter `E` cells as serviced workstations. Small maps place three evenly spaced workstations on each side; Medium places six per side. Every workstation has a directional three-cell inward queue (`approach`, `buffer`, `standby`) and a distinct lateral exit. The checked-in small sidecars have 342/517 pickups, 12 workstations, and 875/987 valid start cells. The medium scaling sidecar deterministically samples 512 of its 12,096 storage cells, uses 24 workstations, and leaves 21,288 valid starts; pickup sampling bounds heuristic memory without changing the map geometry. LoRR results produced before this organized queue layout are benchmark-incompatible and belong under `results/_archive/2026-07-11-pre-organized-lorr-queues`. Regenerate the sidecars with:
 
 ```bash
 python3 scripts/import_lorr_workstation.py \
@@ -129,7 +129,7 @@ To run the six-point LoRR capacity curve:
 
 ```bash
 python3 scripts/run_comparison.py \
-  --root results/pibt_lorr_warehouse_small_tau3_h5_seed1to20 \
+  --root results/pibt_lorr_warehouse_small_organized_tau3_h5_seed1to20 \
   --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
   --seed-start 1 \
   --seed-count 20 \
@@ -137,7 +137,7 @@ python3 scripts/run_comparison.py \
   --service-time 3 \
   --alley-counts '' \
   --plaza-counts '' \
-  --lorr-counts 50,197,343,490,636,783 \
+  --lorr-counts 50,215,380,545,710,875 \
   --continue-on-traffic-jam
 ```
 
@@ -145,7 +145,7 @@ To run the six-point LoRR sortation curve:
 
 ```bash
 python3 scripts/run_comparison.py \
-  --root results/pibt_lorr_sortation_small_tau3_h5_seed1to20 \
+  --root results/pibt_lorr_sortation_small_organized_tau3_h5_seed1to20 \
   --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
   --seed-start 1 \
   --seed-count 20 \
@@ -153,7 +153,7 @@ python3 scripts/run_comparison.py \
   --service-time 3 \
   --alley-counts '' \
   --plaza-counts '' \
-  --lorr-sortation-counts 50,214,378,542,706,870 \
+  --lorr-sortation-counts 52,239,426,613,800,987 \
   --continue-on-traffic-jam
 ```
 
@@ -161,7 +161,7 @@ To run the six-point thousand-agent Sortation Medium curve:
 
 ```bash
 python3 scripts/run_comparison.py \
-  --root results/pibt_lorr_sortation_medium_tau3_h5_seed1to10 \
+  --root results/pibt_lorr_sortation_medium_organized_tau3_h5_seed1to10 \
   --methods pibt_vanilla,pibt_distance_age,pibt_pressure \
   --seed-start 1 \
   --seed-count 10 \

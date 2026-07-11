@@ -221,21 +221,29 @@ void WorkstationGrid::preprocessing(bool consider_rotation)
     clock_t t = std::clock();
     this->consider_rotation = consider_rotation;
     string fname = map_name + (consider_rotation ? "_rotation_heuristics_table.txt" : "_heuristics_table.txt");
+    unordered_set<int> goal_roots = endpoint_set;
+    for (const auto& station : stations)
+    {
+        goal_roots.insert(station.workstation);
+        goal_roots.insert(station.exit_cells.begin(), station.exit_cells.end());
+    }
     bool succ = false;
     std::ifstream in(fname.c_str());
     if (in.is_open())
     {
         succ = load_heuristics_table(in);
         in.close();
+        if (succ)
+        {
+            succ = std::all_of(goal_roots.begin(), goal_roots.end(), [&](int root) {
+                return heuristics.find(root) != heuristics.end();
+            });
+            if (!succ)
+                heuristics.clear();
+        }
     }
     if (!succ)
     {
-        unordered_set<int> goal_roots = endpoint_set;
-        for (const auto& station : stations)
-        {
-            goal_roots.insert(station.workstation);
-            goal_roots.insert(station.exit_cells.begin(), station.exit_cells.end());
-        }
         for (int root : goal_roots)
         {
             heuristics[root] = compute_heuristics(root);
