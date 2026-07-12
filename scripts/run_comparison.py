@@ -61,6 +61,14 @@ def load_status(path: Path) -> dict | None:
     return json.loads(path.read_text())
 
 
+def signatures_match(existing: dict | None, expected: dict) -> bool:
+    if not isinstance(existing, dict):
+        return False
+    comparable = dict(existing)
+    comparable.pop("batch_jobs", None)
+    return comparable == expected
+
+
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -191,9 +199,31 @@ def main() -> int:
         help="Agent counts for the adapted LoRR sortation-small benchmark.",
     )
     parser.add_argument(
+        "--lorr-sortation-benchmark",
+        type=Path,
+        default=repo_root / "benchmarks" / "lorr" / "sortation_small.json",
+        help="Benchmark sidecar used for --lorr-sortation-counts.",
+    )
+    parser.add_argument(
+        "--lorr-sortation-name",
+        default="lorr_sortation_small",
+        help="Result map label used for the sortation-small benchmark.",
+    )
+    parser.add_argument(
         "--lorr-sortation-medium-counts",
         default="",
         help="Agent counts for the adapted LoRR sortation-medium scaling benchmark.",
+    )
+    parser.add_argument(
+        "--lorr-sortation-medium-benchmark",
+        type=Path,
+        default=repo_root / "benchmarks" / "lorr" / "sortation_medium.json",
+        help="Benchmark sidecar used for --lorr-sortation-medium-counts.",
+    )
+    parser.add_argument(
+        "--lorr-sortation-medium-name",
+        default="lorr_sortation_medium",
+        help="Result map label used for the sortation-medium benchmark.",
     )
     parser.add_argument(
         "--methods",
@@ -210,7 +240,7 @@ def main() -> int:
 
     root = Path(args.root)
     root.mkdir(parents=True, exist_ok=True)
-    binary = Path(args.binary)
+    binary = Path(args.binary).resolve()
     if not binary.exists():
         raise SystemExit(f"Missing binary: {binary}")
     binary_sha256 = sha256_file(binary)
@@ -234,19 +264,20 @@ def main() -> int:
         }
     lorr_sortation_counts = parse_counts(args.lorr_sortation_counts)
     if lorr_sortation_counts:
-        grids["lorr_sortation_small"] = {
-            "benchmark": repo_root / "benchmarks" / "lorr" / "sortation_small.json",
+        grids[args.lorr_sortation_name] = {
+            "benchmark": args.lorr_sortation_benchmark,
             "counts": lorr_sortation_counts,
         }
     lorr_sortation_medium_counts = parse_counts(args.lorr_sortation_medium_counts)
     if lorr_sortation_medium_counts:
-        grids["lorr_sortation_medium"] = {
-            "benchmark": repo_root / "benchmarks" / "lorr" / "sortation_medium.json",
+        grids[args.lorr_sortation_medium_name] = {
+            "benchmark": args.lorr_sortation_medium_benchmark,
             "counts": lorr_sortation_medium_counts,
         }
+    grids = {name: config for name, config in grids.items() if config["counts"]}
     for config in grids.values():
         config["benchmark_fingerprints"] = benchmark_fingerprints(config["benchmark"])
-    invalid_plaza_counts = plaza_counts_below_floor(grids["plaza"]["counts"])
+    invalid_plaza_counts = plaza_counts_below_floor(grids.get("plaza", {}).get("counts", []))
     if invalid_plaza_counts:
         parser.error(
             "Plaza counts must be at least 20 for this workstation comparison; "
@@ -325,7 +356,6 @@ def main() -> int:
             "pressure_threshold": args.pressure_threshold,
             "cutoff_time": args.cutoff_time,
             "process_timeout": args.process_timeout,
-            "batch_jobs": args.jobs,
             "continue_on_traffic_jam": args.continue_on_traffic_jam,
         }
         if "pibt_policy" in method_config:
@@ -354,7 +384,7 @@ def main() -> int:
             existing
             and not args.force
             and existing.get("status") in {"clean", "failed"}
-            and existing.get("run_signature") == run_signature
+            and signatures_match(existing.get("run_signature"), run_signature)
         ):
             if existing.get("status") == "clean" and not args.keep_paths:
                 (cell_dir / "paths.txt").unlink(missing_ok=True)

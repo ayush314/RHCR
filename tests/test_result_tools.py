@@ -12,6 +12,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import aggregate_results  # noqa: E402
 import import_lorr_workstation  # noqa: E402
 import run_comparison  # noqa: E402
+import run_sortation_density  # noqa: E402
 
 
 class AggregateResultsTests(unittest.TestCase):
@@ -118,6 +119,29 @@ class RunComparisonTests(unittest.TestCase):
         self.assertEqual(set(fingerprints), {"benchmark.json", "layout.map"})
         self.assertTrue(all(len(value) == 64 for value in fingerprints.values()))
 
+    def test_density_frontier_requires_every_method_and_seed_to_fail(self) -> None:
+        failed = {"status": "failed"}
+        clean = {"status": "clean"}
+        statuses = {method: [failed, failed] for method in run_sortation_density.METHODS}
+        self.assertTrue(run_sortation_density.all_methods_failed(statuses))
+        statuses["pibt_pressure"] = [failed, clean]
+        self.assertFalse(run_sortation_density.all_methods_failed(statuses))
+
+    def test_run_signature_ignores_outer_batch_parallelism(self) -> None:
+        expected = {"method": "pibt_pressure", "seed": 1}
+        existing = {**expected, "batch_jobs": 6}
+        self.assertTrue(run_comparison.signatures_match(existing, expected))
+        self.assertFalse(
+            run_comparison.signatures_match({**existing, "seed": 2}, expected)
+        )
+
+    def test_density_coarse_probes_are_ordered_bounded_and_include_capacity(self) -> None:
+        probes = run_sortation_density.coarse_probe_counts(50, 1106, 10)
+        self.assertEqual(probes, sorted(set(probes)))
+        self.assertEqual(probes[0], 50)
+        self.assertEqual(probes[-1], 1106)
+        self.assertTrue(all(50 <= count <= 1106 for count in probes))
+
 
 class LorrAdapterTests(unittest.TestCase):
     def assert_directional_station_layout(self, benchmark: dict, per_side: int) -> None:
@@ -148,6 +172,38 @@ class LorrAdapterTests(unittest.TestCase):
             self.assertEqual(len(station_cells), 5)
             self.assertFalse(occupied & station_cells)
             occupied.update(station_cells)
+
+    def assert_centered_funnel_layout(
+        self,
+        benchmark: dict,
+        expected_side_counts: dict[str, int],
+    ) -> None:
+        self.assertEqual(benchmark["adapter_station_layout"], "maximal_nonoverlapping_perimeter")
+        self.assertEqual(benchmark["adapter_queue_layout"], "centered_funnel_3x3")
+        self.assertEqual(
+            Counter(station["perimeter_side"] for station in benchmark["stations"]),
+            Counter(expected_side_counts),
+        )
+        occupied: set[tuple[int, int]] = set()
+        for station in benchmark["stations"]:
+            workstation = tuple(station["workstation_cell"])
+            approach = {tuple(cell) for cell in station["approach_cells"]}
+            buffer_cells = {tuple(cell) for cell in station["buffer_cells"]}
+            standby = {tuple(cell) for cell in station["standby_cells"]}
+            exits = {tuple(cell) for cell in station["exit_cells"]}
+            self.assertEqual((len(approach), len(buffer_cells), len(standby), len(exits)), (3, 3, 3, 2))
+            station_cells = {workstation} | approach | buffer_cells | standby | exits
+            self.assertEqual(len(station_cells), 12)
+            self.assertFalse(occupied & station_cells)
+            occupied.update(station_cells)
+
+            side = station["perimeter_side"]
+            if side in {"top", "bottom"}:
+                self.assertEqual({cell[0] for cell in standby}, {workstation[0] - 1, workstation[0], workstation[0] + 1})
+                self.assertEqual({cell[0] for cell in exits}, {workstation[0] - 1, workstation[0] + 1})
+            else:
+                self.assertEqual({cell[1] for cell in standby}, {workstation[1] - 1, workstation[1], workstation[1] + 1})
+                self.assertEqual({cell[1] for cell in exits}, {workstation[1] - 1, workstation[1] + 1})
 
     def test_spaced_selection_matches_reference_farthest_point_rule(self) -> None:
         candidates = [(x, y) for y in range(4) for x in range(7)]
@@ -227,6 +283,52 @@ class LorrAdapterTests(unittest.TestCase):
             for field in ("standby_cells", "buffer_cells", "approach_cells", "exit_cells"):
                 reserved.update(tuple(cell) for cell in station[field])
         self.assertEqual(traversable - len(reserved), 21288)
+
+    def test_sortation_density_sidecars_are_nested_reproducible_and_centered(self) -> None:
+        cases = {
+            "sortation_small": {
+                "source_url": (
+                    "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/"
+                    "2023%20Competition/Problem%20Generator/script/sortation_small.map"
+                ),
+                "pickup_counts": [26, 52, 103, 259, 517],
+                "capacities": [1106, 1080, 1029, 873, 615],
+                "side_counts": {"top": 12, "right": 6, "bottom": 12, "left": 6},
+            },
+            "sortation_medium": {
+                "source_url": (
+                    "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/"
+                    "2023%20Competition/Problem%20Generator/script/sortation_medium.map"
+                ),
+                "pickup_counts": [605, 1210, 2419, 6048, 12096],
+                "capacities": [19371, 18766, 17557, 13928, 7880],
+                "side_counts": {"top": 48, "right": 33, "bottom": 48, "left": 33},
+            },
+        }
+        retentions = [5, 10, 20, 50, 100]
+        for map_name, expected in cases.items():
+            map_path = REPO_ROOT / "benchmarks" / "lorr" / f"{map_name}.map"
+            previous_pickups: set[tuple[int, int]] = set()
+            for index, retention in enumerate(retentions):
+                description = (
+                    f"LoRR {map_name.replace('_', ' ').title()} with centered workstation queues "
+                    f"and {retention}% nested pickup retention."
+                )
+                generated = import_lorr_workstation.build_sortation_density_benchmark(
+                    map_path,
+                    retention,
+                    1,
+                    expected["source_url"],
+                    description,
+                )
+                sidecar_path = REPO_ROOT / "benchmarks" / "lorr" / f"{map_name}_p{retention:02d}.json"
+                self.assertEqual(generated, json.loads(sidecar_path.read_text()))
+                self.assertEqual(generated["adapter_pickup_count"], expected["pickup_counts"][index])
+                self.assertEqual(generated["adapter_valid_start_capacity"], expected["capacities"][index])
+                self.assert_centered_funnel_layout(generated, expected["side_counts"])
+                pickups = {tuple(cell) for cell in generated["pickup_endpoints"]}
+                self.assertTrue(previous_pickups <= pickups)
+                previous_pickups = pickups
 
     def test_warehouse_sidecar_has_balanced_directional_stations(self) -> None:
         map_path = REPO_ROOT / "benchmarks" / "lorr" / "warehouse_small.map"
