@@ -145,7 +145,7 @@ of their size. The paper workspace records their paths and fingerprints.
 This branch was built in a clean worktree and checked with:
 
 - the C++ workstation-policy test target;
-- all 26 Python result-tool tests;
+- all 27 Python result-tool tests;
 - all six PBS/PIBT policy combinations on Alley; and
 - a 1,024-agent, 1,000-step Sortation Small P20 trajectory comparison.
 
