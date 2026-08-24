@@ -4,8 +4,16 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
 #include <sstream>
+#include <stdexcept>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 using boost::property_tree::ptree;
 
@@ -103,6 +111,12 @@ bool load_movingai_grid(WorkstationGrid& G, const string& path)
 }
 } // namespace
 
+WorkstationGrid::~WorkstationGrid()
+{
+    if (compact_mapping != nullptr)
+        munmap(compact_mapping, compact_mapping_size);
+}
+
 bool WorkstationGrid::load_map(string fname)
 {
     std::ifstream stream(fname.c_str());
@@ -123,6 +137,7 @@ bool WorkstationGrid::load_map(string fname)
     if (movingai_map)
     {
         string source_path = resolve_relative_path(fname, *movingai_map);
+        movingai_map_path = source_path;
         if (!load_movingai_grid(*this, source_path))
             return false;
         int expected_rows = root.get<int>("rows", rows);
@@ -215,18 +230,24 @@ bool WorkstationGrid::load_map(string fname)
     return true;
 }
 
+unordered_set<int> WorkstationGrid::workstation_goal_roots() const
+{
+    unordered_set<int> roots = endpoint_set;
+    for (const auto& station : stations)
+    {
+        roots.insert(station.workstation);
+        roots.insert(station.exit_cells.begin(), station.exit_cells.end());
+    }
+    return roots;
+}
+
 void WorkstationGrid::preprocessing(bool consider_rotation)
 {
     std::cout << "*** PreProcessing workstation map ***" << std::endl;
     clock_t t = std::clock();
     this->consider_rotation = consider_rotation;
     string fname = map_name + (consider_rotation ? "_rotation_heuristics_table.txt" : "_heuristics_table.txt");
-    unordered_set<int> goal_roots = endpoint_set;
-    for (const auto& station : stations)
-    {
-        goal_roots.insert(station.workstation);
-        goal_roots.insert(station.exit_cells.begin(), station.exit_cells.end());
-    }
+    unordered_set<int> goal_roots = workstation_goal_roots();
     bool succ = false;
     std::ifstream in(fname.c_str());
     if (in.is_open())
@@ -252,6 +273,186 @@ void WorkstationGrid::preprocessing(bool consider_rotation)
     }
     double runtime = (std::clock() - t) / CLOCKS_PER_SEC;
     std::cout << "Done! (" << runtime << " s)" << std::endl;
+}
+
+string WorkstationGrid::compact_heuristic_path() const
+{
+    string stem = movingai_map_path;
+    size_t dot = stem.rfind('.');
+    if (dot != string::npos)
+        stem.erase(dot);
+    return stem + "_p100_compact_heuristics.bin";
+}
+
+string WorkstationGrid::full_text_heuristic_path() const
+{
+    string stem = movingai_map_path;
+    size_t dot = stem.rfind('.');
+    if (dot != string::npos)
+        stem.erase(dot);
+    return stem + "_p100_heuristics_table.txt";
+}
+
+void WorkstationGrid::build_compact_heuristics(const string& text_path,
+                                               const string& binary_path) const
+{
+    std::ifstream input(text_path.c_str());
+    if (!input.is_open())
+        throw std::runtime_error("Missing exact heuristic source: " + text_path);
+
+    string line;
+    std::getline(input, line);
+    std::getline(input, line);
+    size_t comma = line.find(',');
+    if (comma == string::npos)
+        throw std::runtime_error("Invalid heuristic header: " + text_path);
+    uint32_t root_count = (uint32_t)std::stoul(line.substr(0, comma));
+    uint32_t map_size = (uint32_t)std::stoul(line.substr(comma + 1));
+    if (map_size != (uint32_t)size())
+        throw std::runtime_error("Heuristic map size mismatch: " + text_path);
+
+    const string temporary = binary_path + ".tmp." + std::to_string((long long)getpid());
+    std::ofstream output(temporary.c_str(), std::ios::binary | std::ios::trunc);
+    if (!output.is_open())
+        throw std::runtime_error("Cannot create compact heuristic table: " + temporary);
+
+    const char magic[8] = {'W', 'S', 'H', '1', '6', '\0', '\0', '\1'};
+    output.write(magic, sizeof(magic));
+    output.write(reinterpret_cast<const char*>(&map_size), sizeof(map_size));
+    output.write(reinterpret_cast<const char*>(&root_count), sizeof(root_count));
+    vector<uint16_t> row(map_size);
+    for (uint32_t index = 0; index < root_count; index++)
+    {
+        if (!std::getline(input, line))
+            throw std::runtime_error("Truncated heuristic roots: " + text_path);
+        int32_t root = (int32_t)std::stoi(line);
+        if (!std::getline(input, line))
+            throw std::runtime_error("Truncated heuristic row: " + text_path);
+
+        const char* cursor = line.c_str();
+        const char* end = cursor + line.size();
+        for (uint32_t cell = 0; cell < map_size; cell++)
+        {
+            uint32_t value = 0;
+            bool integer_value = cursor < end;
+            while (cursor < end && *cursor != ',')
+            {
+                if (*cursor >= '0' && *cursor <= '9' && integer_value)
+                {
+                    value = std::min<uint32_t>(65535, value * 10 + (*cursor - '0'));
+                }
+                else
+                {
+                    integer_value = false;
+                }
+                cursor++;
+            }
+            if (cursor < end && *cursor == ',')
+                cursor++;
+            row[cell] = integer_value && value < 65535 ? (uint16_t)value : UINT16_MAX;
+        }
+        output.write(reinterpret_cast<const char*>(&root), sizeof(root));
+        output.write(reinterpret_cast<const char*>(row.data()), row.size() * sizeof(uint16_t));
+        if (!output)
+            throw std::runtime_error("Failed writing compact heuristic table: " + temporary);
+    }
+    output.close();
+    if (std::rename(temporary.c_str(), binary_path.c_str()) != 0)
+    {
+        std::remove(temporary.c_str());
+        throw std::runtime_error("Cannot publish compact heuristic table: " +
+                                 string(std::strerror(errno)));
+    }
+}
+
+bool WorkstationGrid::load_compact_heuristics(const string& path)
+{
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0)
+        return false;
+    struct stat info;
+    if (fstat(fd, &info) != 0 || info.st_size < 16)
+    {
+        close(fd);
+        return false;
+    }
+    void* mapping = mmap(nullptr, info.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (mapping == MAP_FAILED)
+        return false;
+
+    const char expected[8] = {'W', 'S', 'H', '1', '6', '\0', '\0', '\1'};
+    const char* bytes = static_cast<const char*>(mapping);
+    uint32_t map_size = 0;
+    uint32_t root_count = 0;
+    std::memcpy(&map_size, bytes + 8, sizeof(map_size));
+    std::memcpy(&root_count, bytes + 12, sizeof(root_count));
+    const size_t record_size = sizeof(int32_t) + (size_t)map_size * sizeof(uint16_t);
+    const size_t expected_size = 16 + (size_t)root_count * record_size;
+    if (std::memcmp(bytes, expected, sizeof(expected)) != 0 ||
+        map_size != (uint32_t)size() || expected_size != (size_t)info.st_size)
+    {
+        munmap(mapping, info.st_size);
+        return false;
+    }
+
+    compact_mapping = mapping;
+    compact_mapping_size = info.st_size;
+    compact_heuristics.clear();
+    compact_heuristics.reserve(root_count);
+    compact_heuristics_by_goal.assign(size(), nullptr);
+    const char* record = bytes + 16;
+    for (uint32_t index = 0; index < root_count; index++, record += record_size)
+    {
+        int32_t root = -1;
+        std::memcpy(&root, record, sizeof(root));
+        const uint16_t* table = reinterpret_cast<const uint16_t*>(record + sizeof(root));
+        compact_heuristics[root] = table;
+        if (root >= 0 && root < size())
+            compact_heuristics_by_goal[root] = table;
+    }
+    return true;
+}
+
+void WorkstationGrid::preprocessing_compact(bool consider_rotation)
+{
+    if (movingai_map_path.empty() || consider_rotation)
+    {
+        preprocessing(consider_rotation);
+        return;
+    }
+    std::cout << "*** Memory-mapping exact workstation heuristics ***" << std::endl;
+    clock_t t = std::clock();
+    this->consider_rotation = consider_rotation;
+    const string binary_path = compact_heuristic_path();
+    if (!load_compact_heuristics(binary_path))
+    {
+        std::cout << "Building compact exact table from " << full_text_heuristic_path() << std::endl;
+        build_compact_heuristics(full_text_heuristic_path(), binary_path);
+        if (!load_compact_heuristics(binary_path))
+            throw std::runtime_error("Failed to load compact heuristic table: " + binary_path);
+    }
+    const auto goal_roots = workstation_goal_roots();
+    const bool compact_roots_complete = std::all_of(
+        goal_roots.begin(), goal_roots.end(), [&](int root) {
+            return compact_heuristics.find(root) != compact_heuristics.end();
+        });
+    if (!compact_roots_complete)
+    {
+        std::cout << "Compact heuristic table lacks workstation goal roots; "
+                  << "falling back to in-memory exact heuristics" << std::endl;
+        if (compact_mapping != nullptr)
+            munmap(compact_mapping, compact_mapping_size);
+        compact_mapping = nullptr;
+        compact_mapping_size = 0;
+        compact_heuristics.clear();
+        compact_heuristics_by_goal.clear();
+        preprocessing(consider_rotation);
+        return;
+    }
+    double runtime = (std::clock() - t) / CLOCKS_PER_SEC;
+    std::cout << "Done! (" << runtime << " s, " << compact_heuristics.size()
+              << " exact roots)" << std::endl;
 }
 
 int WorkstationGrid::station_for_workstation(int loc) const
@@ -304,10 +505,23 @@ int WorkstationGrid::distance_to_workstation(int station_id, int loc) const
 
 int WorkstationGrid::distance_between(int from, int to) const
 {
+    const uint16_t* table = compact_distance_table(to);
+    if (table != nullptr && from >= 0 && from < size())
+    {
+        uint16_t distance = table[from];
+        return distance == UINT16_MAX ? INT_MAX / 4 : (int)distance;
+    }
     auto it = heuristics.find(to);
     if (it == heuristics.end() || from < 0 || from >= (int)it->second.size())
         return get_Manhattan_distance(from, to);
     return (int)it->second[from];
+}
+
+const uint16_t* WorkstationGrid::compact_distance_table(int to) const
+{
+    if (to >= 0 && to < (int)compact_heuristics_by_goal.size())
+        return compact_heuristics_by_goal[to];
+    return nullptr;
 }
 
 void WorkstationGrid::append_workstation_dwell_goals(vector<pair<int, int> >& goals, int station_id, int dwell_steps) const

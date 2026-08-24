@@ -43,7 +43,7 @@ enum heuristics_type { NONE, CG, DG, WDG, STRATEGY_COUNT };
 typedef tuple<int, int, int, int, bool> Constraint;
 typedef tuple<int, int, int, int, int> Conflict;
 // typedef vector<unordered_set<std::pair<int,int> > > ConstraintTable;
-typedef tuple<int, int, bool> Interval; // [t_min, t_max), have conflicts or not
+typedef tuple<int, int, int> Interval; // [t_min, t_max), soft conflict cost
 #define INTERVAL_MAX 10000
 
 ostream& operator<<(ostream& os, const Constraint& constraint);

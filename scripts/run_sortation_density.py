@@ -12,8 +12,8 @@ from pathlib import Path
 import run_comparison
 
 
-DENSITIES = (5, 10, 20, 50, 100)
-METHODS = ("pibt_vanilla", "pibt_distance_age", "pibt_pressure")
+DENSITIES = (5, 20, 100)
+METHODS = ("pibt_vanilla", "pibt_phase_aware", "pibt_pressure_aware")
 MAP_CONFIG = {
     "small": {
         "stem": "sortation_small",
@@ -32,6 +32,16 @@ MAP_CONFIG = {
         "count_option": "--lorr-sortation-medium-counts",
         "benchmark_option": "--lorr-sortation-medium-benchmark",
         "name_option": "--lorr-sortation-medium-name",
+    },
+    "large": {
+        "stem": "sortation_large",
+        "label": "lorr_sortation_large",
+        "start_count": 2500,
+        "resolution": 500,
+        "ladder_resolution": 250,
+        "count_option": "--lorr-sortation-large-counts",
+        "benchmark_option": "--lorr-sortation-large-benchmark",
+        "name_option": "--lorr-sortation-large-name",
     },
 }
 
@@ -72,6 +82,8 @@ def load_cell_statuses(
     density: int,
     count: int,
     seeds: list[int],
+    *,
+    require_all: bool = True,
 ) -> dict[str, list[dict]]:
     statuses: dict[str, list[dict]] = {}
     for method in METHODS:
@@ -79,8 +91,15 @@ def load_cell_statuses(
         for seed in seeds:
             path = status_path(root, map_key, density, count, method, seed)
             if not path.exists():
-                raise RuntimeError(f"missing result status: {path}")
+                if require_all:
+                    raise RuntimeError(f"missing result status: {path}")
+                continue
             entries.append(json.loads(path.read_text()))
+        if not entries:
+            raise RuntimeError(
+                f"no result statuses for {condition_label(map_key, density)} "
+                f"agents={count} method={method}"
+            )
         statuses[method] = entries
     return statuses
 
@@ -97,6 +116,21 @@ def method_clean_counts(statuses: dict[str, list[dict]]) -> dict[str, int]:
         method: sum(entry.get("status") == "clean" for entry in entries)
         for method, entries in statuses.items()
     }
+
+
+def has_known_clean_status(
+    root: Path,
+    map_key: str,
+    density: int,
+    count: int,
+    seeds: list[int],
+) -> bool:
+    return any(
+        path.exists() and json.loads(path.read_text()).get("status") == "clean"
+        for method in METHODS
+        for seed in seeds
+        for path in (status_path(root, map_key, density, count, method, seed),)
+    )
 
 
 def rounded_probe(value: float, resolution: int, capacity: int) -> int:
@@ -134,6 +168,20 @@ class DensityExperiment:
             "planning_window": self.args.planning_window,
             "simulation_window": self.args.simulation_window,
             "service_time": self.args.service_time,
+            "pressure_threshold": self.args.pressure_threshold,
+            "pressure_zone_cost": self.args.pressure_zone_cost,
+            "pressure_front_progress_cost": self.args.pressure_front_progress_cost,
+            "pressure_exit_progress_cost": self.args.pressure_exit_progress_cost,
+            "pressure_ready_slot_priority": self.args.pressure_ready_slot_priority,
+            "pressure_cost_scope": self.args.pressure_cost_scope,
+            "pressure_cost_activation": self.args.pressure_cost_activation,
+            "pressure_admission": self.args.pressure_admission,
+            "pressure_inbound_limit": self.args.pressure_inbound_limit,
+            "pressure_cost_occupancy_threshold": self.args.pressure_cost_occupancy_threshold,
+            "pressure_lookahead_profile": self.args.pressure_lookahead_profile,
+            "pressure_lookahead_radius": self.args.pressure_lookahead_radius,
+            "pressure_lookahead_min_agents_per_station":
+                self.args.pressure_lookahead_min_agents_per_station,
             "maps": {},
         }
 
@@ -153,6 +201,9 @@ class DensityExperiment:
     ) -> list[str]:
         config = MAP_CONFIG[map_key]
         label = condition_label(map_key, density)
+        jobs = self.args.jobs
+        if map_key == "large" and density == 100:
+            jobs = min(jobs, self.args.large_100_jobs)
         command = [
             sys.executable,
             str(self.repo_root / "scripts" / "run_comparison.py"),
@@ -165,9 +216,32 @@ class DensityExperiment:
             "--service-time", str(self.args.service_time),
             "--cutoff-time", str(self.args.cutoff_time),
             "--process-timeout", str(self.args.process_timeout),
-            "--jobs", str(self.args.jobs),
+            "--jobs", str(jobs),
             "--screen", "0",
             "--methods", ",".join(METHODS),
+            "--pressure-threshold", str(self.args.pressure_threshold),
+            "--pressure-zone-cost", str(self.args.pressure_zone_cost),
+            "--pressure-front-progress-cost", str(self.args.pressure_front_progress_cost),
+            "--pressure-exit-progress-cost", str(self.args.pressure_exit_progress_cost),
+            "--pressure-ready-slot-priority" if self.args.pressure_ready_slot_priority else "--no-pressure-ready-slot-priority",
+            "--pressure-cost-scope", self.args.pressure_cost_scope,
+            "--pressure-cost-activation", self.args.pressure_cost_activation,
+            "--pressure-cost-mode", self.args.pressure_cost_mode,
+            "--pressure-population", "inbound_only",
+            "--pressure-admission", self.args.pressure_admission,
+            "--pressure-inbound-limit", str(self.args.pressure_inbound_limit),
+            "--pressure-cost-occupancy-threshold",
+            str(self.args.pressure_cost_occupancy_threshold),
+            "--pressure-lookahead-profile", self.args.pressure_lookahead_profile,
+            "--pressure-lookahead-radius", str(self.args.pressure_lookahead_radius),
+            "--pressure-lookahead-min-agents-per-station",
+            str(self.args.pressure_lookahead_min_agents_per_station),
+            "--pressure-cost-horizon", "0",
+            "--pressure-cost-horizon-profile", "fixed",
+            "--no-pressure-front-runner-priority",
+            "--no-pibt-global-front-runner-priority",
+            "--no-pibt-front-runner-priority",
+            "--no-pibt-front-runner-ready-priority",
             "--alley-counts", "",
             "--plaza-counts", "",
             config["count_option"], ",".join(str(count) for count in counts),
@@ -190,6 +264,13 @@ class DensityExperiment:
         subprocess.run(self.runner_command(map_key, density, counts, seeds), check=True)
 
     def terminal(self, map_key: str, density: int, count: int, seeds: list[int]) -> bool:
+        if has_known_clean_status(self.root, map_key, density, count, seeds):
+            print(
+                f"[frontier] {condition_label(map_key, density)} agents={count} "
+                "known_clean=true",
+                flush=True,
+            )
+            return False
         self.run_counts(map_key, density, [count], seeds)
         statuses = load_cell_statuses(self.root, map_key, density, count, seeds)
         clean = method_clean_counts(statuses)
@@ -266,7 +347,7 @@ class DensityExperiment:
     def lock_five_percent_ladder(self, map_key: str) -> tuple[list[int], int, str]:
         config = MAP_CONFIG[map_key]
         start = config["start_count"]
-        resolution = config["resolution"]
+        resolution = config.get("ladder_resolution", config["resolution"])
         capacity = load_capacity(benchmark_path(self.repo_root, map_key, 5))
         _low, high = self.bracket_five_percent(map_key)
         target_intervals = 10
@@ -297,22 +378,20 @@ class DensityExperiment:
             if terminal_count > capacity:
                 step -= resolution
                 continue
-            last_fails = self.terminal(map_key, 5, reported_last, self.discovery_seeds)
-            terminal_fails = self.terminal(map_key, 5, terminal_count, self.discovery_seeds)
-            if last_fails:
+            if self.terminal(map_key, 5, reported_last, self.discovery_seeds):
                 step -= resolution
                 continue
+            terminal_fails = self.terminal(map_key, 5, terminal_count, self.discovery_seeds)
             if not terminal_fails:
                 step += resolution
                 continue
             if step <= 0:
                 break
 
-            last_fails_full = self.terminal(map_key, 5, reported_last, self.full_seeds)
-            terminal_fails_full = self.terminal(map_key, 5, terminal_count, self.full_seeds)
-            if last_fails_full:
+            if self.terminal(map_key, 5, reported_last, self.full_seeds):
                 step -= resolution
                 continue
+            terminal_fails_full = self.terminal(map_key, 5, terminal_count, self.full_seeds)
             if not terminal_fails_full:
                 step += resolution
                 continue
@@ -396,9 +475,32 @@ class DensityExperiment:
             "planning_window": self.args.planning_window,
             "simulation_window": self.args.simulation_window,
             "service_time": self.args.service_time,
+            "pressure_threshold": self.args.pressure_threshold,
+            "pressure_zone_cost": self.args.pressure_zone_cost,
+            "pressure_front_progress_cost": self.args.pressure_front_progress_cost,
+            "pressure_exit_progress_cost": self.args.pressure_exit_progress_cost,
+            "pressure_ready_slot_priority": self.args.pressure_ready_slot_priority,
+            "pressure_cost_scope": self.args.pressure_cost_scope,
+            "pressure_cost_activation": self.args.pressure_cost_activation,
+            "pressure_admission": self.args.pressure_admission,
+            "pressure_inbound_limit": self.args.pressure_inbound_limit,
+            "pressure_cost_occupancy_threshold": self.args.pressure_cost_occupancy_threshold,
+            "pressure_lookahead_profile": self.args.pressure_lookahead_profile,
+            "pressure_lookahead_radius": self.args.pressure_lookahead_radius,
+            "pressure_lookahead_min_agents_per_station":
+                self.args.pressure_lookahead_min_agents_per_station,
             "cutoff_time": self.args.cutoff_time,
             "process_timeout": self.args.process_timeout,
             "jobs": self.args.jobs,
+            "jobs_by_density": {
+                condition_label(map_key, density): (
+                    min(self.args.jobs, self.args.large_100_jobs)
+                    if map_key == "large" and density == 100
+                    else self.args.jobs
+                )
+                for map_key in self.args.maps
+                for density in DENSITIES
+            },
             "stop_at_traffic_jam": True,
             "binary": str(self.binary),
             "binary_sha256": run_comparison.sha256_file(self.binary),
@@ -430,7 +532,12 @@ class DensityExperiment:
                         })
                     continue
                 statuses = load_cell_statuses(
-                    self.root, map_key, density, count, self.full_seeds
+                    self.root,
+                    map_key,
+                    density,
+                    count,
+                    self.full_seeds,
+                    require_all=entry["terminal_mode"] == "traffic_jam",
                 )
                 for method, method_statuses in statuses.items():
                     failures = sorted({
@@ -460,7 +567,13 @@ class DensityExperiment:
                 raise RuntimeError(f"missing discovered frontier for {map_key}")
             map_entry = self.frontier["maps"][map_key]
             for density in DENSITIES:
-                counts = map_entry["densities"][str(density)]["accepted_counts"]
+                density_entry = map_entry["densities"][str(density)]
+                counts = list(density_entry["accepted_counts"])
+                # Traffic-jam terminals are real executable probes and must be
+                # materialized for the final seeds so reliability plots can
+                # distinguish a terminal failure from a missing result.
+                if density_entry["terminal_mode"] == "traffic_jam":
+                    counts.append(int(density_entry["terminal_count"]))
                 self.run_counts(map_key, density, counts, self.full_seeds)
         self.write_master_manifest()
         self.write_frontier_diagnostics()
@@ -485,15 +598,34 @@ def main() -> int:
     parser.add_argument("--stage", choices=("precompute", "discover", "full", "all"), default="all")
     parser.add_argument("--map-set", default="small,medium")
     parser.add_argument("--discovery-seed-count", type=int, default=3)
-    parser.add_argument("--seed-count", type=int, default=10)
-    parser.add_argument("--simulation-time", type=int, default=500)
+    parser.add_argument("--seed-count", type=int, default=5)
+    parser.add_argument("--simulation-time", type=int, default=1000)
     parser.add_argument("--planning-window", type=int, default=20)
     parser.add_argument("--simulation-window", type=int, default=5)
     parser.add_argument("--service-time", type=int, default=3)
+    parser.add_argument("--pressure-threshold", type=int, default=1)
+    parser.add_argument("--pressure-zone-cost", type=float, default=1.0)
+    parser.add_argument("--pressure-front-progress-cost", type=int, default=0)
+    parser.add_argument("--pressure-exit-progress-cost", type=int, default=0)
+    parser.add_argument("--pressure-ready-slot-priority", action="store_true", default=False)
+    parser.add_argument("--no-pressure-ready-slot-priority", dest="pressure_ready_slot_priority", action="store_false")
+    parser.add_argument("--pressure-cost-scope", choices=("zone", "queue", "holding", "approach", "entry", "lookahead"), default="zone")
+    parser.add_argument("--pressure-cost-mode", choices=("fixed", "escalating", "occupancy_escalating", "priority_only"), default="fixed")
+    parser.add_argument("--pressure-cost-activation", choices=("zone", "excess_wip", "outside_only", "progress_only", "wait_only", "incumbent_grace", "entry_only", "enter_only", "deeper_only", "busy_only"), default="zone")
+    parser.add_argument("--pressure-admission", choices=("single", "adaptive", "scale_adaptive"), default="adaptive")
+    parser.add_argument("--pressure-inbound-limit", type=int, default=3)
+    parser.add_argument("--pressure-cost-occupancy-threshold", type=int, default=3)
+    parser.add_argument(
+        "--pressure-lookahead-profile", choices=("fixed", "scale_adaptive"),
+        default="scale_adaptive",
+    )
+    parser.add_argument("--pressure-lookahead-radius", type=int, default=50)
+    parser.add_argument("--pressure-lookahead-min-agents-per-station", type=int, default=40)
     parser.add_argument("--cutoff-time", type=int, default=60)
     parser.add_argument("--process-timeout", type=int, default=1800)
     parser.add_argument("--precompute-timeout", type=int, default=14400)
     parser.add_argument("--jobs", type=int, default=6)
+    parser.add_argument("--large-100-jobs", type=int, default=3)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     args.maps = [part.strip() for part in args.map_set.split(",") if part.strip()]
@@ -502,6 +634,8 @@ def main() -> int:
         parser.error(f"unknown maps in --map-set: {','.join(unknown_maps)}")
     if args.discovery_seed_count < 1 or args.seed_count < args.discovery_seed_count:
         parser.error("seed counts must satisfy 1 <= discovery <= full")
+    if args.jobs < 1 or args.large_100_jobs < 1:
+        parser.error("job counts must be positive")
 
     experiment = DensityExperiment(args)
     if args.stage in {"precompute", "all"}:

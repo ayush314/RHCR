@@ -1,0 +1,2293 @@
+{
+  "benchmark_id": "lorr_sortation_small_p05",
+  "description": "LoRR-derived Sortation Small, 5% pickup retention, layout seed 2.",
+  "source": "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/2023%20Competition/Problem%20Generator/script/sortation_small.map",
+  "source_sha256": "686d810cf2eb8cab83894af390eb5c5d0f2960b8c84e52176841583740a3c96f",
+  "adapter_station_count": 36,
+  "adapter_station_layout": "maximal_nonoverlapping_perimeter",
+  "adapter_queue_layout": "centered_funnel_3x3",
+  "adapter_pickup_retention_percent": 5,
+  "adapter_pickup_sample_seed": 2,
+  "adapter_original_pickup_count": 517,
+  "adapter_pickup_count": 26,
+  "adapter_valid_start_capacity": 1106,
+  "rows": 33,
+  "cols": 57,
+  "movingai_map": "sortation_small.map",
+  "simulation_time_default": 500,
+  "planning_window_default": 20,
+  "simulation_window_default": 5,
+  "seed_start_default": 1,
+  "seed_count_default": 10,
+  "service_time_default": 3,
+  "task_model": "endpoint_station_alternating",
+  "restrict_station_zones": false,
+  "pickup_endpoints": [
+    [
+      20,
+      5
+    ],
+    [
+      25,
+      6
+    ],
+    [
+      45,
+      6
+    ],
+    [
+      22,
+      7
+    ],
+    [
+      23,
+      8
+    ],
+    [
+      31,
+      8
+    ],
+    [
+      22,
+      9
+    ],
+    [
+      26,
+      9
+    ],
+    [
+      38,
+      9
+    ],
+    [
+      32,
+      11
+    ],
+    [
+      48,
+      11
+    ],
+    [
+      7,
+      12
+    ],
+    [
+      20,
+      13
+    ],
+    [
+      28,
+      13
+    ],
+    [
+      34,
+      13
+    ],
+    [
+      29,
+      14
+    ],
+    [
+      16,
+      15
+    ],
+    [
+      23,
+      18
+    ],
+    [
+      49,
+      18
+    ],
+    [
+      11,
+      20
+    ],
+    [
+      13,
+      20
+    ],
+    [
+      30,
+      21
+    ],
+    [
+      19,
+      22
+    ],
+    [
+      42,
+      23
+    ],
+    [
+      19,
+      24
+    ],
+    [
+      27,
+      26
+    ]
+  ],
+  "stations": [
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        5,
+        0
+      ],
+      "standby_cells": [
+        [
+          4,
+          1
+        ],
+        [
+          5,
+          1
+        ],
+        [
+          6,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          4,
+          2
+        ],
+        [
+          5,
+          2
+        ],
+        [
+          6,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          4,
+          3
+        ],
+        [
+          5,
+          3
+        ],
+        [
+          6,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          4,
+          0
+        ],
+        [
+          6,
+          0
+        ]
+      ],
+      "station_id": 0
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        9,
+        0
+      ],
+      "standby_cells": [
+        [
+          8,
+          1
+        ],
+        [
+          9,
+          1
+        ],
+        [
+          10,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          8,
+          2
+        ],
+        [
+          9,
+          2
+        ],
+        [
+          10,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          8,
+          3
+        ],
+        [
+          9,
+          3
+        ],
+        [
+          10,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          8,
+          0
+        ],
+        [
+          10,
+          0
+        ]
+      ],
+      "station_id": 1
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        13,
+        0
+      ],
+      "standby_cells": [
+        [
+          12,
+          1
+        ],
+        [
+          13,
+          1
+        ],
+        [
+          14,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          12,
+          2
+        ],
+        [
+          13,
+          2
+        ],
+        [
+          14,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          12,
+          3
+        ],
+        [
+          13,
+          3
+        ],
+        [
+          14,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          12,
+          0
+        ],
+        [
+          14,
+          0
+        ]
+      ],
+      "station_id": 2
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        17,
+        0
+      ],
+      "standby_cells": [
+        [
+          16,
+          1
+        ],
+        [
+          17,
+          1
+        ],
+        [
+          18,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          16,
+          2
+        ],
+        [
+          17,
+          2
+        ],
+        [
+          18,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          16,
+          3
+        ],
+        [
+          17,
+          3
+        ],
+        [
+          18,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          16,
+          0
+        ],
+        [
+          18,
+          0
+        ]
+      ],
+      "station_id": 3
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        21,
+        0
+      ],
+      "standby_cells": [
+        [
+          20,
+          1
+        ],
+        [
+          21,
+          1
+        ],
+        [
+          22,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          20,
+          2
+        ],
+        [
+          21,
+          2
+        ],
+        [
+          22,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          20,
+          3
+        ],
+        [
+          21,
+          3
+        ],
+        [
+          22,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          20,
+          0
+        ],
+        [
+          22,
+          0
+        ]
+      ],
+      "station_id": 4
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        25,
+        0
+      ],
+      "standby_cells": [
+        [
+          24,
+          1
+        ],
+        [
+          25,
+          1
+        ],
+        [
+          26,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          24,
+          2
+        ],
+        [
+          25,
+          2
+        ],
+        [
+          26,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          24,
+          3
+        ],
+        [
+          25,
+          3
+        ],
+        [
+          26,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          24,
+          0
+        ],
+        [
+          26,
+          0
+        ]
+      ],
+      "station_id": 5
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        29,
+        0
+      ],
+      "standby_cells": [
+        [
+          28,
+          1
+        ],
+        [
+          29,
+          1
+        ],
+        [
+          30,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          28,
+          2
+        ],
+        [
+          29,
+          2
+        ],
+        [
+          30,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          28,
+          3
+        ],
+        [
+          29,
+          3
+        ],
+        [
+          30,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          28,
+          0
+        ],
+        [
+          30,
+          0
+        ]
+      ],
+      "station_id": 6
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        33,
+        0
+      ],
+      "standby_cells": [
+        [
+          32,
+          1
+        ],
+        [
+          33,
+          1
+        ],
+        [
+          34,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          32,
+          2
+        ],
+        [
+          33,
+          2
+        ],
+        [
+          34,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          32,
+          3
+        ],
+        [
+          33,
+          3
+        ],
+        [
+          34,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          32,
+          0
+        ],
+        [
+          34,
+          0
+        ]
+      ],
+      "station_id": 7
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        37,
+        0
+      ],
+      "standby_cells": [
+        [
+          36,
+          1
+        ],
+        [
+          37,
+          1
+        ],
+        [
+          38,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          36,
+          2
+        ],
+        [
+          37,
+          2
+        ],
+        [
+          38,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          36,
+          3
+        ],
+        [
+          37,
+          3
+        ],
+        [
+          38,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          36,
+          0
+        ],
+        [
+          38,
+          0
+        ]
+      ],
+      "station_id": 8
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        41,
+        0
+      ],
+      "standby_cells": [
+        [
+          40,
+          1
+        ],
+        [
+          41,
+          1
+        ],
+        [
+          42,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          40,
+          2
+        ],
+        [
+          41,
+          2
+        ],
+        [
+          42,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          40,
+          3
+        ],
+        [
+          41,
+          3
+        ],
+        [
+          42,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          40,
+          0
+        ],
+        [
+          42,
+          0
+        ]
+      ],
+      "station_id": 9
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        45,
+        0
+      ],
+      "standby_cells": [
+        [
+          44,
+          1
+        ],
+        [
+          45,
+          1
+        ],
+        [
+          46,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          44,
+          2
+        ],
+        [
+          45,
+          2
+        ],
+        [
+          46,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          44,
+          3
+        ],
+        [
+          45,
+          3
+        ],
+        [
+          46,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          44,
+          0
+        ],
+        [
+          46,
+          0
+        ]
+      ],
+      "station_id": 10
+    },
+    {
+      "perimeter_side": "top",
+      "workstation_cell": [
+        49,
+        0
+      ],
+      "standby_cells": [
+        [
+          48,
+          1
+        ],
+        [
+          49,
+          1
+        ],
+        [
+          50,
+          1
+        ]
+      ],
+      "buffer_cells": [
+        [
+          48,
+          2
+        ],
+        [
+          49,
+          2
+        ],
+        [
+          50,
+          2
+        ]
+      ],
+      "approach_cells": [
+        [
+          48,
+          3
+        ],
+        [
+          49,
+          3
+        ],
+        [
+          50,
+          3
+        ]
+      ],
+      "exit_cells": [
+        [
+          48,
+          0
+        ],
+        [
+          50,
+          0
+        ]
+      ],
+      "station_id": 11
+    },
+    {
+      "perimeter_side": "right",
+      "workstation_cell": [
+        56,
+        5
+      ],
+      "standby_cells": [
+        [
+          55,
+          4
+        ],
+        [
+          55,
+          5
+        ],
+        [
+          55,
+          6
+        ]
+      ],
+      "buffer_cells": [
+        [
+          54,
+          4
+        ],
+        [
+          54,
+          5
+        ],
+        [
+          54,
+          6
+        ]
+      ],
+      "approach_cells": [
+        [
+          53,
+          4
+        ],
+        [
+          53,
+          5
+        ],
+        [
+          53,
+          6
+        ]
+      ],
+      "exit_cells": [
+        [
+          56,
+          4
+        ],
+        [
+          56,
+          6
+        ]
+      ],
+      "station_id": 12
+    },
+    {
+      "perimeter_side": "right",
+      "workstation_cell": [
+        56,
+        9
+      ],
+      "standby_cells": [
+        [
+          55,
+          8
+        ],
+        [
+          55,
+          9
+        ],
+        [
+          55,
+          10
+        ]
+      ],
+      "buffer_cells": [
+        [
+          54,
+          8
+        ],
+        [
+          54,
+          9
+        ],
+        [
+          54,
+          10
+        ]
+      ],
+      "approach_cells": [
+        [
+          53,
+          8
+        ],
+        [
+          53,
+          9
+        ],
+        [
+          53,
+          10
+        ]
+      ],
+      "exit_cells": [
+        [
+          56,
+          8
+        ],
+        [
+          56,
+          10
+        ]
+      ],
+      "station_id": 13
+    },
+    {
+      "perimeter_side": "right",
+      "workstation_cell": [
+        56,
+        13
+      ],
+      "standby_cells": [
+        [
+          55,
+          12
+        ],
+        [
+          55,
+          13
+        ],
+        [
+          55,
+          14
+        ]
+      ],
+      "buffer_cells": [
+        [
+          54,
+          12
+        ],
+        [
+          54,
+          13
+        ],
+        [
+          54,
+          14
+        ]
+      ],
+      "approach_cells": [
+        [
+          53,
+          12
+        ],
+        [
+          53,
+          13
+        ],
+        [
+          53,
+          14
+        ]
+      ],
+      "exit_cells": [
+        [
+          56,
+          12
+        ],
+        [
+          56,
+          14
+        ]
+      ],
+      "station_id": 14
+    },
+    {
+      "perimeter_side": "right",
+      "workstation_cell": [
+        56,
+        17
+      ],
+      "standby_cells": [
+        [
+          55,
+          16
+        ],
+        [
+          55,
+          17
+        ],
+        [
+          55,
+          18
+        ]
+      ],
+      "buffer_cells": [
+        [
+          54,
+          16
+        ],
+        [
+          54,
+          17
+        ],
+        [
+          54,
+          18
+        ]
+      ],
+      "approach_cells": [
+        [
+          53,
+          16
+        ],
+        [
+          53,
+          17
+        ],
+        [
+          53,
+          18
+        ]
+      ],
+      "exit_cells": [
+        [
+          56,
+          16
+        ],
+        [
+          56,
+          18
+        ]
+      ],
+      "station_id": 15
+    },
+    {
+      "perimeter_side": "right",
+      "workstation_cell": [
+        56,
+        21
+      ],
+      "standby_cells": [
+        [
+          55,
+          20
+        ],
+        [
+          55,
+          21
+        ],
+        [
+          55,
+          22
+        ]
+      ],
+      "buffer_cells": [
+        [
+          54,
+          20
+        ],
+        [
+          54,
+          21
+        ],
+        [
+          54,
+          22
+        ]
+      ],
+      "approach_cells": [
+        [
+          53,
+          20
+        ],
+        [
+          53,
+          21
+        ],
+        [
+          53,
+          22
+        ]
+      ],
+      "exit_cells": [
+        [
+          56,
+          20
+        ],
+        [
+          56,
+          22
+        ]
+      ],
+      "station_id": 16
+    },
+    {
+      "perimeter_side": "right",
+      "workstation_cell": [
+        56,
+        25
+      ],
+      "standby_cells": [
+        [
+          55,
+          24
+        ],
+        [
+          55,
+          25
+        ],
+        [
+          55,
+          26
+        ]
+      ],
+      "buffer_cells": [
+        [
+          54,
+          24
+        ],
+        [
+          54,
+          25
+        ],
+        [
+          54,
+          26
+        ]
+      ],
+      "approach_cells": [
+        [
+          53,
+          24
+        ],
+        [
+          53,
+          25
+        ],
+        [
+          53,
+          26
+        ]
+      ],
+      "exit_cells": [
+        [
+          56,
+          24
+        ],
+        [
+          56,
+          26
+        ]
+      ],
+      "station_id": 17
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        51,
+        32
+      ],
+      "standby_cells": [
+        [
+          52,
+          31
+        ],
+        [
+          51,
+          31
+        ],
+        [
+          50,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          52,
+          30
+        ],
+        [
+          51,
+          30
+        ],
+        [
+          50,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          52,
+          29
+        ],
+        [
+          51,
+          29
+        ],
+        [
+          50,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          52,
+          32
+        ],
+        [
+          50,
+          32
+        ]
+      ],
+      "station_id": 18
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        47,
+        32
+      ],
+      "standby_cells": [
+        [
+          48,
+          31
+        ],
+        [
+          47,
+          31
+        ],
+        [
+          46,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          48,
+          30
+        ],
+        [
+          47,
+          30
+        ],
+        [
+          46,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          48,
+          29
+        ],
+        [
+          47,
+          29
+        ],
+        [
+          46,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          48,
+          32
+        ],
+        [
+          46,
+          32
+        ]
+      ],
+      "station_id": 19
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        43,
+        32
+      ],
+      "standby_cells": [
+        [
+          44,
+          31
+        ],
+        [
+          43,
+          31
+        ],
+        [
+          42,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          44,
+          30
+        ],
+        [
+          43,
+          30
+        ],
+        [
+          42,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          44,
+          29
+        ],
+        [
+          43,
+          29
+        ],
+        [
+          42,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          44,
+          32
+        ],
+        [
+          42,
+          32
+        ]
+      ],
+      "station_id": 20
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        39,
+        32
+      ],
+      "standby_cells": [
+        [
+          40,
+          31
+        ],
+        [
+          39,
+          31
+        ],
+        [
+          38,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          40,
+          30
+        ],
+        [
+          39,
+          30
+        ],
+        [
+          38,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          40,
+          29
+        ],
+        [
+          39,
+          29
+        ],
+        [
+          38,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          40,
+          32
+        ],
+        [
+          38,
+          32
+        ]
+      ],
+      "station_id": 21
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        35,
+        32
+      ],
+      "standby_cells": [
+        [
+          36,
+          31
+        ],
+        [
+          35,
+          31
+        ],
+        [
+          34,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          36,
+          30
+        ],
+        [
+          35,
+          30
+        ],
+        [
+          34,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          36,
+          29
+        ],
+        [
+          35,
+          29
+        ],
+        [
+          34,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          36,
+          32
+        ],
+        [
+          34,
+          32
+        ]
+      ],
+      "station_id": 22
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        31,
+        32
+      ],
+      "standby_cells": [
+        [
+          32,
+          31
+        ],
+        [
+          31,
+          31
+        ],
+        [
+          30,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          32,
+          30
+        ],
+        [
+          31,
+          30
+        ],
+        [
+          30,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          32,
+          29
+        ],
+        [
+          31,
+          29
+        ],
+        [
+          30,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          32,
+          32
+        ],
+        [
+          30,
+          32
+        ]
+      ],
+      "station_id": 23
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        27,
+        32
+      ],
+      "standby_cells": [
+        [
+          28,
+          31
+        ],
+        [
+          27,
+          31
+        ],
+        [
+          26,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          28,
+          30
+        ],
+        [
+          27,
+          30
+        ],
+        [
+          26,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          28,
+          29
+        ],
+        [
+          27,
+          29
+        ],
+        [
+          26,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          28,
+          32
+        ],
+        [
+          26,
+          32
+        ]
+      ],
+      "station_id": 24
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        23,
+        32
+      ],
+      "standby_cells": [
+        [
+          24,
+          31
+        ],
+        [
+          23,
+          31
+        ],
+        [
+          22,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          24,
+          30
+        ],
+        [
+          23,
+          30
+        ],
+        [
+          22,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          24,
+          29
+        ],
+        [
+          23,
+          29
+        ],
+        [
+          22,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          24,
+          32
+        ],
+        [
+          22,
+          32
+        ]
+      ],
+      "station_id": 25
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        19,
+        32
+      ],
+      "standby_cells": [
+        [
+          20,
+          31
+        ],
+        [
+          19,
+          31
+        ],
+        [
+          18,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          20,
+          30
+        ],
+        [
+          19,
+          30
+        ],
+        [
+          18,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          20,
+          29
+        ],
+        [
+          19,
+          29
+        ],
+        [
+          18,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          20,
+          32
+        ],
+        [
+          18,
+          32
+        ]
+      ],
+      "station_id": 26
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        15,
+        32
+      ],
+      "standby_cells": [
+        [
+          16,
+          31
+        ],
+        [
+          15,
+          31
+        ],
+        [
+          14,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          16,
+          30
+        ],
+        [
+          15,
+          30
+        ],
+        [
+          14,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          16,
+          29
+        ],
+        [
+          15,
+          29
+        ],
+        [
+          14,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          16,
+          32
+        ],
+        [
+          14,
+          32
+        ]
+      ],
+      "station_id": 27
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        11,
+        32
+      ],
+      "standby_cells": [
+        [
+          12,
+          31
+        ],
+        [
+          11,
+          31
+        ],
+        [
+          10,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          12,
+          30
+        ],
+        [
+          11,
+          30
+        ],
+        [
+          10,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          12,
+          29
+        ],
+        [
+          11,
+          29
+        ],
+        [
+          10,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          12,
+          32
+        ],
+        [
+          10,
+          32
+        ]
+      ],
+      "station_id": 28
+    },
+    {
+      "perimeter_side": "bottom",
+      "workstation_cell": [
+        7,
+        32
+      ],
+      "standby_cells": [
+        [
+          8,
+          31
+        ],
+        [
+          7,
+          31
+        ],
+        [
+          6,
+          31
+        ]
+      ],
+      "buffer_cells": [
+        [
+          8,
+          30
+        ],
+        [
+          7,
+          30
+        ],
+        [
+          6,
+          30
+        ]
+      ],
+      "approach_cells": [
+        [
+          8,
+          29
+        ],
+        [
+          7,
+          29
+        ],
+        [
+          6,
+          29
+        ]
+      ],
+      "exit_cells": [
+        [
+          8,
+          32
+        ],
+        [
+          6,
+          32
+        ]
+      ],
+      "station_id": 29
+    },
+    {
+      "perimeter_side": "left",
+      "workstation_cell": [
+        0,
+        27
+      ],
+      "standby_cells": [
+        [
+          1,
+          28
+        ],
+        [
+          1,
+          27
+        ],
+        [
+          1,
+          26
+        ]
+      ],
+      "buffer_cells": [
+        [
+          2,
+          28
+        ],
+        [
+          2,
+          27
+        ],
+        [
+          2,
+          26
+        ]
+      ],
+      "approach_cells": [
+        [
+          3,
+          28
+        ],
+        [
+          3,
+          27
+        ],
+        [
+          3,
+          26
+        ]
+      ],
+      "exit_cells": [
+        [
+          0,
+          28
+        ],
+        [
+          0,
+          26
+        ]
+      ],
+      "station_id": 30
+    },
+    {
+      "perimeter_side": "left",
+      "workstation_cell": [
+        0,
+        23
+      ],
+      "standby_cells": [
+        [
+          1,
+          24
+        ],
+        [
+          1,
+          23
+        ],
+        [
+          1,
+          22
+        ]
+      ],
+      "buffer_cells": [
+        [
+          2,
+          24
+        ],
+        [
+          2,
+          23
+        ],
+        [
+          2,
+          22
+        ]
+      ],
+      "approach_cells": [
+        [
+          3,
+          24
+        ],
+        [
+          3,
+          23
+        ],
+        [
+          3,
+          22
+        ]
+      ],
+      "exit_cells": [
+        [
+          0,
+          24
+        ],
+        [
+          0,
+          22
+        ]
+      ],
+      "station_id": 31
+    },
+    {
+      "perimeter_side": "left",
+      "workstation_cell": [
+        0,
+        19
+      ],
+      "standby_cells": [
+        [
+          1,
+          20
+        ],
+        [
+          1,
+          19
+        ],
+        [
+          1,
+          18
+        ]
+      ],
+      "buffer_cells": [
+        [
+          2,
+          20
+        ],
+        [
+          2,
+          19
+        ],
+        [
+          2,
+          18
+        ]
+      ],
+      "approach_cells": [
+        [
+          3,
+          20
+        ],
+        [
+          3,
+          19
+        ],
+        [
+          3,
+          18
+        ]
+      ],
+      "exit_cells": [
+        [
+          0,
+          20
+        ],
+        [
+          0,
+          18
+        ]
+      ],
+      "station_id": 32
+    },
+    {
+      "perimeter_side": "left",
+      "workstation_cell": [
+        0,
+        15
+      ],
+      "standby_cells": [
+        [
+          1,
+          16
+        ],
+        [
+          1,
+          15
+        ],
+        [
+          1,
+          14
+        ]
+      ],
+      "buffer_cells": [
+        [
+          2,
+          16
+        ],
+        [
+          2,
+          15
+        ],
+        [
+          2,
+          14
+        ]
+      ],
+      "approach_cells": [
+        [
+          3,
+          16
+        ],
+        [
+          3,
+          15
+        ],
+        [
+          3,
+          14
+        ]
+      ],
+      "exit_cells": [
+        [
+          0,
+          16
+        ],
+        [
+          0,
+          14
+        ]
+      ],
+      "station_id": 33
+    },
+    {
+      "perimeter_side": "left",
+      "workstation_cell": [
+        0,
+        11
+      ],
+      "standby_cells": [
+        [
+          1,
+          12
+        ],
+        [
+          1,
+          11
+        ],
+        [
+          1,
+          10
+        ]
+      ],
+      "buffer_cells": [
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          10
+        ]
+      ],
+      "approach_cells": [
+        [
+          3,
+          12
+        ],
+        [
+          3,
+          11
+        ],
+        [
+          3,
+          10
+        ]
+      ],
+      "exit_cells": [
+        [
+          0,
+          12
+        ],
+        [
+          0,
+          10
+        ]
+      ],
+      "station_id": 34
+    },
+    {
+      "perimeter_side": "left",
+      "workstation_cell": [
+        0,
+        7
+      ],
+      "standby_cells": [
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          6
+        ]
+      ],
+      "buffer_cells": [
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          6
+        ]
+      ],
+      "approach_cells": [
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          6
+        ]
+      ],
+      "exit_cells": [
+        [
+          0,
+          8
+        ],
+        [
+          0,
+          6
+        ]
+      ],
+      "station_id": 35
+    }
+  ]
+}

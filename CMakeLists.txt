@@ -20,3 +20,19 @@ include_directories( ${Boost_INCLUDE_DIRS} )
 
 add_executable(lifelong ${SOURCES} )
 target_link_libraries(lifelong ${Boost_LIBRARIES})
+
+enable_testing()
+add_executable(workstation_policy_tests
+    tests/workstation_policy_tests.cpp
+    src/BasicGraph.cpp
+    src/MAPFSolver.cpp
+    src/PIBT.cpp
+    src/ReservationTable.cpp
+    src/SIPP.cpp
+    src/SingleAgentSolver.cpp
+    src/StateTimeAStar.cpp
+    src/States.cpp
+    src/WorkstationGraph.cpp
+    src/common.cpp)
+target_link_libraries(workstation_policy_tests ${Boost_LIBRARIES})
+add_test(NAME workstation_policy_tests COMMAND workstation_policy_tests)

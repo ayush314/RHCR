@@ -19,7 +19,8 @@ void ReservationTable::updateSIT(size_t location)
             if (custom_soft != soft_vertex_ct.end())
             {
                 for (auto time_range : custom_soft->second)
-                    insertSoftConstraint2SIT(location, time_range.first, time_range.second);
+                    insertSoftConstraint2SIT(location, std::get<0>(time_range),
+                                             std::get<1>(time_range), std::get<2>(time_range));
             }
 			for (int t = 0; t < (int)cat.size(); t++)
 			{
@@ -159,16 +160,18 @@ void ReservationTable::insertConstraint2SIT(int location, int t_min, int t_max)
     }
 }
 
-void ReservationTable::insertSoftConstraint2SIT(int location, int t_min, int t_max)
+void ReservationTable::insertSoftConstraint2SIT(int location, int t_min, int t_max, int cost)
 {
+    if (cost <= 0)
+        return;
     if (sit.find(location) == sit.end())
     {
         if (t_min > 0)
         {
-			sit[location].emplace_back(0, t_min, false);
+			sit[location].emplace_back(0, t_min, 0);
         }
-		sit[location].emplace_back(t_min, t_max, true);
-		sit[location].emplace_back(t_max, INTERVAL_MAX, false);
+		sit[location].emplace_back(t_min, t_max, cost);
+		sit[location].emplace_back(t_max, INTERVAL_MAX, 0);
         return;
     }
     for (auto it = sit[location].begin(); it != sit[location].end(); it++)
@@ -177,39 +180,36 @@ void ReservationTable::insertSoftConstraint2SIT(int location, int t_min, int t_m
             continue;
         else if (t_max <= std::get<0>(*it))
             break;
-		else if (std::get<2>(*it)) // the interval already has conflicts. No need to update
-			continue;
-
         if (std::get<0>(*it) < t_min && std::get<1>(*it) <= t_max)
         {
-			sit[location].insert(it, make_tuple(std::get<0>(*it), t_min, false));
-			(*it) = make_tuple(t_min, std::get<1>(*it), true);
+			sit[location].insert(it, make_tuple(std::get<0>(*it), t_min, std::get<2>(*it)));
+			(*it) = make_tuple(t_min, std::get<1>(*it), std::get<2>(*it) + cost);
         }
         else if (t_min <= std::get<0>(*it) && t_max < std::get<1>(*it))
         {
-			sit[location].insert(it, make_tuple(std::get<0>(*it), t_max, true));
-            (*it) = make_tuple(t_max, std::get<1>(*it), false);
+			sit[location].insert(it, make_tuple(std::get<0>(*it), t_max, std::get<2>(*it) + cost));
+            (*it) = make_tuple(t_max, std::get<1>(*it), std::get<2>(*it));
         }
         else if (std::get<0>(*it) < t_min && t_max < std::get<1>(*it))
         {
-			sit[location].insert(it, make_tuple(std::get<0>(*it), t_min, false));
-			sit[location].insert(it, make_tuple(t_min, t_max,  true));
-            (*it) = make_tuple(t_max, std::get<1>(*it), false);
+			sit[location].insert(it, make_tuple(std::get<0>(*it), t_min, std::get<2>(*it)));
+			sit[location].insert(it, make_tuple(t_min, t_max, std::get<2>(*it) + cost));
+            (*it) = make_tuple(t_max, std::get<1>(*it), std::get<2>(*it));
         }
         else // constraint_min <= get<0>(*it) && get<1> <= constraint_max
         {
-            (*it) = make_tuple(std::get<0>(*it), std::get<1>(*it), true);
+            (*it) = make_tuple(std::get<0>(*it), std::get<1>(*it), std::get<2>(*it) + cost);
         }
     }
 }
 
-void ReservationTable::addSoftVertexConstraint(int location, int t_min, int t_max)
+void ReservationTable::addSoftVertexConstraint(int location, int t_min, int t_max, int cost)
 {
     if (location < 0 || location >= (int)map_size || t_max <= t_min)
         return;
     if (G.types[location] == "Magic")
         return;
-    soft_vertex_ct[location].emplace_back(t_min, t_max);
+    soft_vertex_ct[location].emplace_back(t_min, t_max, cost);
 }
 
 
@@ -258,9 +258,35 @@ void ReservationTable::insertPath2CT(const Path& path)
         ct[path.back().location].emplace_back(path.back().timestep, window + 1 + k_robust);
 }
 
+void ReservationTable::prepareInitialConstraints(
+    const list< tuple<int, int, int> >& initial_constraints)
+{
+    initial_constraint_cache.assign(G.size(), vector<pair<int, int>>());
+    for (const auto& constraint : initial_constraints)
+    {
+        const int location = std::get<1>(constraint);
+        if (location >= 0 && location < G.size() && G.types[location] != "Magic")
+            initial_constraint_cache[location].emplace_back(
+                std::get<0>(constraint), std::get<2>(constraint));
+    }
+    initial_constraint_cache_ready = true;
+}
+
 void ReservationTable::addInitialConstraints(const list< tuple<int, int, int> >& initial_constraints, int current_agent)
 {
-	for (auto con : initial_constraints)
+    if (initial_constraint_cache_ready)
+    {
+        for (size_t location = 0; location < initial_constraint_cache.size(); location++)
+        {
+            for (const auto& constraint : initial_constraint_cache[location])
+            {
+                if (constraint.first != current_agent)
+                    ct[location].emplace_back(0, min(window, constraint.second));
+            }
+        }
+        return;
+    }
+	for (const auto& con : initial_constraints)
 	{
 		if (std::get<0>(con) != current_agent && 0 <= std::get<1>(con) && std::get<1>(con) < G.types.size() &&
 			G.types[std::get<1>(con)] != "Magic")
@@ -586,30 +612,41 @@ bool ReservationTable::isConstrained(int curr_id, int next_id, int next_timestep
 
 bool ReservationTable::isConflicting(int curr_id, int next_id, int next_timestep) const
 {
-    if (next_id >= 0 && next_id < (int)map_size)
-    {
-        auto it_soft = soft_vertex_ct.find(next_id);
-        if (it_soft != soft_vertex_ct.end())
-        {
-            for (auto time_range : it_soft->second)
-            {
-                if (next_timestep >= time_range.first && next_timestep < time_range.second)
-                    return true;
-            }
-        }
-    }
+    return getConflictCost(curr_id, next_id, next_timestep) > 0;
+}
+
+int ReservationTable::getConflictCost(int curr_id, int next_id, int next_timestep) const
+{
+    int cost = getSoftVertexCost(next_id, next_timestep);
 
 	if (next_timestep >= (int)cat.size())
-		return false;
+		return cost;
 
 	// check vertex constraints (being in next_id at next_timestep is disallowed)
 	if (cat[next_timestep][next_id])
-		return true;
+		return cost + 1;
 	// check edge constraints (the move from curr_id to next_id at next_timestep-1 is disallowed)
 	// which means that res_table is occupied with another agent for [curr_id,next_timestep] and [next_id,next_timestep-1]
 	// WRONG!
 	else if (curr_id != next_id && cat[next_timestep][curr_id] && cat[next_timestep - 1][next_id])
-		return true;
+		return cost + 1;
 	else
-		return false;
+		return cost;
+}
+
+int ReservationTable::getSoftVertexCost(int location, int timestep) const
+{
+    int cost = 0;
+    if (location < 0 || location >= (int)map_size)
+        return cost;
+    auto it = soft_vertex_ct.find(location);
+    if (it == soft_vertex_ct.end())
+        return cost;
+    for (const auto& time_range : it->second)
+    {
+        if (timestep >= std::get<0>(time_range) &&
+            timestep < std::get<1>(time_range))
+            cost += std::get<2>(time_range);
+    }
+    return cost;
 }

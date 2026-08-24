@@ -14,7 +14,44 @@ public:
     bool prioritize_start = true;
     string station_policy = "vanilla";
     int workstation_pressure_threshold = -1;
+    int workstation_pressure_zone_cost = 1;
+    int pressure_inbound_limit = 3;
+    int pressure_cost_occupancy_threshold = 3;
+    int pressure_cost_horizon = 0;
+    string pressure_cost_horizon_profile = "fixed";
+    bool pressure_local_action_only = false;
+    bool pressure_front_runner_priority = false;
+    bool pressure_front_runner_zone_only = false;
+    bool pressure_front_runner_ready_priority = false;
+    bool pressure_ready_slot_priority = false;
+    int pressure_front_progress_cost = 0;
+    int pressure_exit_progress_cost = 0;
+    int pressure_lookahead_radius = 0;
+    string pressure_lookahead_profile = "fixed";
+    int pressure_lookahead_min_agents_per_station = 40;
+    int network_pressure_fraction = 25;
+    string pressure_admission = "adaptive";
+    string pressure_cost_mode = "fixed";
+    string pressure_cost_scope = "zone";
+    string pressure_cost_activation = "zone";
+    string pressure_population = "inbound_only";
+    string pressure_profile = "fixed";
     vector<WorkstationAgentContext> workstation_context;
+    vector<vector<WorkstationAgentContext>> projected_goal_context;
+    vector<int> station_pressure_cache;
+    vector<int> station_zone_occupancy_cache;
+    vector<char> station_service_busy_cache;
+    int pressure_threshold_cache = 1;
+    int pressure_zone_cost_cache = 1;
+    int pressure_lookahead_radius_cache = 0;
+    bool pressure_state_cache_ready = false;
+    vector<vector<int>> station_privileged_agents_cache;
+    vector<vector<char>> station_privileged_flags_cache;
+    vector<vector<int>> pressure_zone_cells_cache;
+    vector<vector<int>> pressure_lookahead_cells_cache;
+    vector<vector<int>> pressure_cost_cells_cache;
+    bool pressure_cache_ready = false;
+    bool network_pressure_active = false;
 
 	 // runtime breakdown
     double runtime_rt = 0;
@@ -52,9 +89,24 @@ public:
 	void save_constraints_in_goal_node(const std::string &fileName) const;
 
     string get_name() const {return "PBS"; }
-    void set_workstation_policy(const string& policy) { station_policy = policy; }
+    void set_workstation_policy(const string& policy) { station_policy = canonical_workstation_policy(policy); }
     void set_workstation_pressure_threshold(int threshold) { workstation_pressure_threshold = threshold; }
+    void set_pressure_profile(const string& profile) { pressure_profile = profile; }
+    void set_pressure_lookahead_radius(int radius) { pressure_lookahead_radius = radius; }
+    void set_pressure_lookahead_profile(const string& profile) { pressure_lookahead_profile = profile; }
+    void set_pressure_lookahead_min_agents_per_station(int value) { pressure_lookahead_min_agents_per_station = value; }
+    void set_pressure_cost_horizon(int value) { pressure_cost_horizon = value; }
+    void set_pressure_cost_horizon_profile(const string& profile) { pressure_cost_horizon_profile = profile; }
+    void set_pressure_local_action_only(bool value) { pressure_local_action_only = value; }
+    void set_pressure_front_runner_priority(bool value) { pressure_front_runner_priority = value; }
+    void set_pressure_front_runner_zone_only(bool value) { pressure_front_runner_zone_only = value; }
+    void set_pressure_front_runner_ready_priority(bool value) { pressure_front_runner_ready_priority = value; }
+    void set_pressure_ready_slot_priority(bool value) { pressure_ready_slot_priority = value; }
+    void set_pressure_front_progress_cost(int value) { pressure_front_progress_cost = value; }
+    void set_pressure_exit_progress_cost(int value) { pressure_exit_progress_cost = value; }
+    void set_network_pressure_fraction(int fraction) { network_pressure_fraction = fraction; }
     void set_workstation_context(const vector<WorkstationAgentContext>& context) { workstation_context = context; }
+    void set_projected_goal_context(const vector<vector<WorkstationAgentContext>>& context) { projected_goal_context = context; }
 
 	void clear();
 
@@ -130,10 +182,13 @@ private:
     void find_replan_agents(PBSNode* node, const list<Conflict>& conflicts,
             unordered_set<int>& replan);
     bool prefer_workstation_branch(const Conflict& conflict, pair<int, int>& preferred_priority) const;
-    tuple<int, int, int> distance_age_key(int agent) const;
-    tuple<int, int, int, int> pressure_aware_front_runner_key(int agent) const;
-    int workstation_front_runner(int station_id) const;
+    WorkstationAgentContext projected_context_at(int agent, int local_t) const;
+    tuple<int, int, int, int> pressure_privilege_key(int agent, int station_id) const;
+    vector<int> workstation_privileged_agents(int station_id, int pressure) const;
     int effective_workstation_pressure_threshold() const;
+    int workstation_pressure(int station_id) const;
+    void initialize_pressure_cache();
     bool workstation_pressure_active(int pressure) const;
     bool maybe_add_workstation_softzone(ReservationTable& rt, int agent);
+    bool maybe_add_workstation_progress_cost(ReservationTable& rt, int agent);
 };

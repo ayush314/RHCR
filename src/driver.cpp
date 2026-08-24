@@ -74,21 +74,21 @@ MAPFSolver* set_solver(const BasicGraph& G, const boost::program_options::variab
 	{
 		PIBT* pibt = new PIBT(G, *path_planner);
 		pibt->set_pibt_policy(vm["pibt_policy"].as<string>());
-		pibt->set_pressure_profile(vm["pibt_pressure_profile"].as<string>());
-		pibt->set_hindrance_scope(vm["pibt_hindrance_scope"].as<string>());
-		pibt->pressure_entry_penalty = vm["pibt_pressure_entry_penalty"].as<double>();
-		pibt->set_pressure_inbound_limit(vm["pibt_pressure_inbound_limit"].as<int>());
-		pibt->wait_penalty = vm["pibt_wait_penalty"].as<double>();
-		pibt->exit_bonus = vm["pibt_exit_bonus"].as<double>();
-		pibt->front_bonus = vm["pibt_front_bonus"].as<double>();
-		pibt->soft_collision_penalty = vm["pibt_soft_collision_penalty"].as<double>();
-		pibt->hindrance_tiebreak = vm["pibt_hindrance"].as<bool>();
-		pibt->regret_iterations = vm["pibt_regret_iterations"].as<int>();
-		pibt->regret_weight = vm["pibt_regret_weight"].as<double>();
-		pibt->regret_scope = vm["pibt_regret_scope"].as<string>();
+        pibt->set_pressure_admission(vm["pressure_admission"].as<string>());
+        pibt->set_pressure_cost_mode(vm["pressure_cost_mode"].as<string>());
+        pibt->pressure_cost_scope = vm["pressure_cost_scope"].as<string>();
+        pibt->pressure_cost_activation = vm["pressure_cost_activation"].as<string>();
+        pibt->set_pressure_population(vm["pressure_population"].as<string>());
+        pibt->pressure_zone_cost = vm["pressure_zone_cost"].as<double>();
+        pibt->set_pressure_inbound_limit(vm["pressure_inbound_limit"].as<int>());
+        pibt->set_pressure_lookahead_radius(vm["pressure_lookahead_radius"].as<int>());
+        pibt->set_network_pressure_fraction(vm["pibt_network_pressure_fraction"].as<int>());
+        pibt->set_network_pressure_min_agents_per_station(
+            vm["pibt_network_pressure_min_agents_per_station"].as<int>());
+		pibt->set_assignment_budget_factor(vm["pibt_assignment_budget_factor"].as<int>());
+        pibt->set_pressure_assignment_extension_factor(
+			vm["pibt_pressure_assignment_extension_factor"].as<int>());
 		pibt->random_tiebreak = vm["pibt_random_tiebreak"].as<bool>();
-		pibt->front_priority_enabled = vm["pibt_front_priority"].as<bool>();
-		pibt->phase_priority_enabled = vm["pibt_phase_priority"].as<bool>();
 		mapf_solver = pibt;
 	}
     else if (solver_name == "WHCA")
@@ -143,24 +143,39 @@ int main(int argc, char** argv)
 			        "the planner outputs plans with first planning_window timesteps collision-free")
         ("service_time", po::value<int>()->default_value(3), "workstation dwell time")
         ("pressure_threshold", po::value<int>()->default_value(-1), "workstation pressure trigger threshold override; -1 uses the station policy default")
-        ("station_policy", po::value<string>()->default_value("vanilla"), "workstation planning policy (vanilla, distance_age, pressure_aware)")
+        ("pressure_profile", po::value<string>()->default_value("fixed"), "pressure profile (fixed, prevalence_adaptive)")
+        ("station_policy", po::value<string>()->default_value("vanilla"), "workstation planning policy (vanilla, phase_aware, pressure_aware)")
         ("stop_at_traffic_jam", po::value<bool>()->default_value(true), "stop workstation simulations when the traffic-jam detector triggers")
-        ("pibt_policy", po::value<string>()->default_value("vanilla"), "PIBT workstation policy (vanilla, distance_age, pressure)")
-        ("pibt_pressure_entry_penalty", po::value<double>()->default_value(2), "PIBT pressure-policy penalty for entering pressured station zones")
-        ("pibt_pressure_inbound_limit", po::value<int>()->default_value(4), "maximum target-bound PIBT agents admitted inside each pressured station zone")
-        ("pibt_pressure_profile", po::value<string>()->default_value("thirds"), "PIBT pressure admission profile (none, half, severe, thirds)")
-        ("pibt_wait_penalty", po::value<double>()->default_value(2), "PIBT pressure-policy wait penalty")
-        ("pibt_exit_bonus", po::value<double>()->default_value(1), "PIBT pressure-policy exit progress bonus")
-        ("pibt_front_bonus", po::value<double>()->default_value(3), "PIBT pressure-policy front-runner progress bonus")
-        ("pibt_soft_collision_penalty", po::value<double>()->default_value(0), "PIBT pressure-policy occupied-candidate penalty")
-        ("pibt_hindrance", po::value<bool>()->default_value(true), "use the lightweight PIBT hindrance tiebreaker")
-        ("pibt_hindrance_scope", po::value<string>()->default_value("inherited"), "PIBT hindrance scope")
-        ("pibt_regret_iterations", po::value<int>()->default_value(1), "number of PIBT regret-learning passes; 1 disables regret")
-        ("pibt_regret_weight", po::value<double>()->default_value(0.5), "exponential update weight for PIBT regret learning")
-        ("pibt_regret_scope", po::value<string>()->default_value("all"), "PIBT regret scope (all, pickup, exit_pickup, outside_zone, pickup_outside_zone)")
+        ("pibt_policy", po::value<string>()->default_value("vanilla"), "PIBT workstation policy (vanilla, phase_aware, pressure_aware)")
+        ("pressure_admission", po::value<string>()->default_value("adaptive"), "pressure admission (single, adaptive, scale_adaptive)")
+        ("pressure_cost_mode", po::value<string>()->default_value("fixed"), "pressure cost mode (fixed, escalating, occupancy_escalating, priority_only)")
+        ("pressure_cost_scope", po::value<string>()->default_value("zone"), "pressure action-cost scope (zone, queue, holding, approach, entry, lookahead)")
+        ("pressure_cost_activation", po::value<string>()->default_value("zone"), "pressure soft-cost activation (zone, excess_wip, outside_only, progress_only, wait_only, incumbent_grace, entry_only, enter_only, deeper_only, busy_only)")
+        ("pressure_population", po::value<string>()->default_value("inbound_only"), "pressure population (all_phases, inbound_only)")
+        ("pressure_zone_cost", po::value<double>()->default_value(1), "soft pressured-zone occupancy cost")
+        ("pressure_front_progress_cost", po::value<int>()->default_value(0), "soft cost when the privileged inbound agent does not move closer to its workstation")
+        ("pressure_exit_progress_cost", po::value<int>()->default_value(0), "soft cost when an exiting agent does not move closer to a station exit")
+        ("pressure_ready_slot_priority", po::value<bool>()->default_value(false), "give a ready pressured-station front runner local precedence over unprotected traffic")
+        ("pressure_inbound_limit", po::value<int>()->default_value(3), "base adaptive privileged inbound budget")
+        ("pressure_cost_occupancy_threshold", po::value<int>()->default_value(3), "minimum physical station-zone occupancy before applying soft pressure cost")
+        ("pressure_cost_horizon", po::value<int>()->default_value(0), "maximum local PBS soft pressure-cost horizon; 0 uses the full planning window")
+        ("pressure_cost_horizon_profile", po::value<string>()->default_value("fixed"), "PBS pressure-cost horizon profile (fixed, network_adaptive)")
+        ("pressure_local_action_only", po::value<bool>()->default_value(false), "apply PBS soft pressure cost only to agents currently adjacent to the pressured zone")
+        ("pressure_front_runner_priority", po::value<bool>()->default_value(false), "let the selected pressure front runner win PBS same-station conflicts")
+        ("pressure_front_runner_zone_only", po::value<bool>()->default_value(false), "limit PBS front-runner promotion to conflicts touching the station zone")
+        ("pressure_front_runner_ready_priority", po::value<bool>()->default_value(false), "only promote the PBS front runner when it is within one move of the workstation")
+        ("pressure_lookahead_radius", po::value<int>()->default_value(0), "near-station WIP pressure lookahead radius; 0 uses zone-only pressure")
+        ("pressure_lookahead_profile", po::value<string>()->default_value("fixed"), "lookahead profile (fixed, scale_adaptive)")
+        ("pressure_lookahead_min_agents_per_station", po::value<int>()->default_value(40), "scale-adaptive lookahead activation density")
+        ("pibt_network_pressure_fraction", po::value<int>()->default_value(25), "minimum percentage of pressured stations for global PIBT front-runner priority")
+        ("pibt_network_pressure_min_agents_per_station", po::value<int>()->default_value(0), "minimum agents per station before global PIBT front-runner priority; zero disables the scale gate")
+        ("pibt_global_front_runner_priority", po::value<bool>()->default_value(false), "allow selected pressure front runners to precede unrelated agents globally")
+        ("pibt_assignment_budget_factor", po::value<int>()->default_value(90), "PIBT assignment search budget per agent")
+        ("pibt_pressure_assignment_extension_factor", po::value<int>()->default_value(20), "shared PIBT search extension after exhaustion; zero disables it")
+        ("pibt_front_runner_priority", po::value<bool>()->default_value(false), "let selected pressure front runners precede native PIBT priority ordering")
+        ("pibt_front_runner_ready_priority", po::value<bool>()->default_value(false), "prioritize a ready pressure front runner above unrelated PIBT agents")
+        ("native_failures_only", po::value<bool>()->default_value(false), "disable PBS LRA fallback and commitment repair")
         ("pibt_random_tiebreak", po::value<bool>()->default_value(true), "use a seeded random final PIBT preference tiebreak")
-        ("pibt_front_priority", po::value<bool>()->default_value(true), "give the pressure front runner an ordering boost")
-        ("pibt_phase_priority", po::value<bool>()->default_value(false), "give service and exit phases an ordering boost")
 		("potential_function", po::value<string>()->default_value("NONE"), "potential function (NONE, SOC, IC)")
 		("potential_threshold", po::value<double>()->default_value(0), "potential threshold")
 		("rotation", po::value<bool>()->default_value(false), "consider rotation")
@@ -233,57 +248,129 @@ int main(int argc, char** argv)
             std::cerr << "WORKSTATION requires --solver PBS or --solver PIBT with --id false" << endl;
             exit(-1);
         }
-        if (workstation_solver == "PIBT")
+        string station_policy = canonical_workstation_policy(vm["station_policy"].as<string>());
+        string pibt_policy = canonical_workstation_policy(vm["pibt_policy"].as<string>());
+        auto valid_policy = [](const string& policy) {
+            return policy == "vanilla" || policy == "phase_aware" ||
+                policy == "pressure_aware";
+        };
+        if ((workstation_solver == "PBS" && !valid_policy(station_policy)) ||
+            (workstation_solver == "PIBT" && !valid_policy(pibt_policy)))
         {
-            string pibt_policy = vm["pibt_policy"].as<string>();
-            if (pibt_policy != "vanilla" &&
-                pibt_policy != "distance_age" &&
-                pibt_policy != "pressure")
-            {
-                std::cerr << "WORKSTATION PIBT policy must be vanilla, distance_age, or pressure" << endl;
-                exit(-1);
-            }
-            if (vm["pibt_pressure_inbound_limit"].as<int>() < 1)
-            {
-                std::cerr << "WORKSTATION PIBT pressure inbound limit must be positive" << endl;
-                exit(-1);
-            }
-            string pressure_profile = vm["pibt_pressure_profile"].as<string>();
-            if (pressure_profile != "none" && pressure_profile != "half" &&
-                pressure_profile != "severe" && pressure_profile != "thirds")
-            {
-                std::cerr << "WORKSTATION PIBT pressure profile must be none, half, severe, or thirds" << endl;
-                exit(-1);
-            }
-            string hindrance_scope = vm["pibt_hindrance_scope"].as<string>();
-            if (hindrance_scope != "all" && hindrance_scope != "inherited" &&
-                hindrance_scope != "dense" && hindrance_scope != "inherited_dense" &&
-                hindrance_scope != "station" && hindrance_scope != "inherited_station" &&
-                hindrance_scope != "outside_zone" && hindrance_scope != "inherited_outside_zone" &&
-                hindrance_scope != "pickup" && hindrance_scope != "inherited_pickup")
-            {
-                std::cerr << "Invalid WORKSTATION PIBT hindrance scope" << endl;
-                exit(-1);
-            }
-            if (vm["pibt_regret_iterations"].as<int>() < 1)
-            {
-                std::cerr << "WORKSTATION PIBT regret iterations must be positive" << endl;
-                exit(-1);
-            }
-            double regret_weight = vm["pibt_regret_weight"].as<double>();
-            if (regret_weight < 0 || regret_weight > 1)
-            {
-                std::cerr << "WORKSTATION PIBT regret weight must be in [0, 1]" << endl;
-                exit(-1);
-            }
-            string regret_scope = vm["pibt_regret_scope"].as<string>();
-            if (regret_scope != "all" && regret_scope != "pickup" &&
-                regret_scope != "exit_pickup" && regret_scope != "outside_zone" &&
-                regret_scope != "pickup_outside_zone")
-            {
-                std::cerr << "Invalid WORKSTATION PIBT regret scope" << endl;
-                exit(-1);
-            }
+            std::cerr << "WORKSTATION policy must be vanilla, phase_aware, or pressure_aware" << endl;
+            exit(-1);
+        }
+        string pressure_admission = vm["pressure_admission"].as<string>();
+        if (pressure_admission != "single" && pressure_admission != "adaptive" &&
+            pressure_admission != "wide" &&
+            pressure_admission != "scale_adaptive")
+        {
+            std::cerr << "WORKSTATION pressure admission must be single, adaptive, wide, or scale_adaptive" << endl;
+            exit(-1);
+        }
+        string pressure_cost_mode = vm["pressure_cost_mode"].as<string>();
+        if (pressure_cost_mode != "fixed" && pressure_cost_mode != "escalating" &&
+            pressure_cost_mode != "occupancy_escalating" &&
+            pressure_cost_mode != "priority_only")
+        {
+            std::cerr << "WORKSTATION pressure cost mode must be fixed, escalating, occupancy_escalating, or priority_only" << endl;
+            exit(-1);
+        }
+        string pressure_cost_scope = vm["pressure_cost_scope"].as<string>();
+        if (pressure_cost_scope != "zone" && pressure_cost_scope != "queue" &&
+            pressure_cost_scope != "holding" && pressure_cost_scope != "approach" &&
+            pressure_cost_scope != "entry" &&
+            pressure_cost_scope != "lookahead")
+        {
+            std::cerr << "WORKSTATION pressure cost scope must be zone, queue, holding, approach, entry, or lookahead" << endl;
+            exit(-1);
+        }
+        string pressure_cost_activation = vm["pressure_cost_activation"].as<string>();
+        if (pressure_cost_activation != "zone" && pressure_cost_activation != "excess_wip" &&
+            pressure_cost_activation != "outside_only" && pressure_cost_activation != "progress_only" &&
+            pressure_cost_activation != "wait_only" && pressure_cost_activation != "incumbent_grace" &&
+            pressure_cost_activation != "entry_only" &&
+            pressure_cost_activation != "enter_only" &&
+            pressure_cost_activation != "deeper_only" &&
+            pressure_cost_activation != "busy_only")
+        {
+            std::cerr << "WORKSTATION pressure cost activation must be zone, excess_wip, outside_only, progress_only, wait_only, incumbent_grace, entry_only, enter_only, deeper_only, or busy_only" << endl;
+            exit(-1);
+        }
+        string pressure_population = vm["pressure_population"].as<string>();
+        if (pressure_population != "all_phases" && pressure_population != "inbound_only")
+        {
+            std::cerr << "WORKSTATION pressure population must be all_phases or inbound_only" << endl;
+            exit(-1);
+        }
+        string pressure_profile = vm["pressure_profile"].as<string>();
+        if (pressure_profile != "fixed" && pressure_profile != "prevalence_adaptive")
+        {
+            std::cerr << "WORKSTATION pressure profile must be fixed or prevalence_adaptive" << endl;
+            exit(-1);
+        }
+        double pressure_zone_cost = vm["pressure_zone_cost"].as<double>();
+        if (vm["pressure_inbound_limit"].as<int>() < 1 || pressure_zone_cost <= 0 ||
+            pressure_zone_cost != static_cast<int>(pressure_zone_cost))
+        {
+            std::cerr << "WORKSTATION pressure budget and integer zone cost must be positive" << endl;
+            exit(-1);
+        }
+        if (vm["pressure_front_progress_cost"].as<int>() < 0 ||
+            vm["pressure_exit_progress_cost"].as<int>() < 0)
+        {
+            std::cerr << "WORKSTATION progress costs must be nonnegative" << endl;
+            exit(-1);
+        }
+        if (vm["pibt_assignment_budget_factor"].as<int>() < 1)
+        {
+            std::cerr << "WORKSTATION PIBT assignment budget factor must be positive" << endl;
+            exit(-1);
+        }
+        if (vm["pibt_pressure_assignment_extension_factor"].as<int>() < 0)
+        {
+            std::cerr << "WORKSTATION pressure assignment extension factor must be nonnegative" << endl;
+            exit(-1);
+        }
+        if (vm["pressure_lookahead_radius"].as<int>() < 0)
+        {
+            std::cerr << "WORKSTATION pressure lookahead radius must be nonnegative" << endl;
+            exit(-1);
+        }
+        string pressure_lookahead_profile = vm["pressure_lookahead_profile"].as<string>();
+        if (pressure_lookahead_profile != "fixed" &&
+            pressure_lookahead_profile != "scale_adaptive")
+        {
+            std::cerr << "WORKSTATION pressure lookahead profile must be fixed or scale_adaptive" << endl;
+            exit(-1);
+        }
+        if (vm["pressure_lookahead_min_agents_per_station"].as<int>() < 1)
+        {
+            std::cerr << "WORKSTATION scale-adaptive lookahead density must be positive" << endl;
+            exit(-1);
+        }
+        if (vm["pressure_cost_horizon"].as<int>() < 0)
+        {
+            std::cerr << "WORKSTATION pressure cost horizon must be nonnegative" << endl;
+            exit(-1);
+        }
+        string pressure_cost_horizon_profile = vm["pressure_cost_horizon_profile"].as<string>();
+        if (pressure_cost_horizon_profile != "fixed" &&
+            pressure_cost_horizon_profile != "network_adaptive")
+        {
+            std::cerr << "WORKSTATION pressure cost horizon profile must be fixed or network_adaptive" << endl;
+            exit(-1);
+        }
+        if (vm["pibt_network_pressure_fraction"].as<int>() < 1 ||
+            vm["pibt_network_pressure_fraction"].as<int>() > 100)
+        {
+            std::cerr << "WORKSTATION PIBT network pressure fraction must be in [1, 100]" << endl;
+            exit(-1);
+        }
+        if (vm["pibt_network_pressure_min_agents_per_station"].as<int>() < 0)
+        {
+            std::cerr << "WORKSTATION PIBT network pressure scale gate must be nonnegative" << endl;
+            exit(-1);
         }
     }
     else if (map_path.empty())
@@ -402,11 +489,46 @@ int main(int argc, char** argv)
         WorkstationSystem system(G, *solver);
         set_parameters(system, vm);
         system.workstation_service_time = vm["service_time"].as<int>();
-        system.station_policy = vm["station_policy"].as<string>();
-        system.pibt_policy = vm["pibt_policy"].as<string>();
+        system.station_policy = canonical_workstation_policy(vm["station_policy"].as<string>());
+        system.pibt_policy = canonical_workstation_policy(vm["pibt_policy"].as<string>());
         system.workstation_pressure_threshold = vm["pressure_threshold"].as<int>();
+        system.pressure_profile = vm["pressure_profile"].as<string>();
+        system.pressure_admission = vm["pressure_admission"].as<string>();
+        system.pressure_cost_mode = vm["pressure_cost_mode"].as<string>();
+        system.pressure_cost_scope = vm["pressure_cost_scope"].as<string>();
+        system.pressure_cost_activation = vm["pressure_cost_activation"].as<string>();
+        system.pressure_population = vm["pressure_population"].as<string>();
+        system.pressure_zone_cost = (int)vm["pressure_zone_cost"].as<double>();
+        system.pressure_front_progress_cost = vm["pressure_front_progress_cost"].as<int>();
+        system.pressure_exit_progress_cost = vm["pressure_exit_progress_cost"].as<int>();
+        system.pressure_ready_slot_priority = vm["pressure_ready_slot_priority"].as<bool>();
+        system.pressure_inbound_limit = vm["pressure_inbound_limit"].as<int>();
+        system.pressure_cost_occupancy_threshold = vm["pressure_cost_occupancy_threshold"].as<int>();
+        system.pressure_cost_horizon = vm["pressure_cost_horizon"].as<int>();
+        system.pressure_cost_horizon_profile = vm["pressure_cost_horizon_profile"].as<string>();
+        system.pressure_local_action_only = vm["pressure_local_action_only"].as<bool>();
+    system.pressure_front_runner_priority = vm["pressure_front_runner_priority"].as<bool>();
+    system.pressure_front_runner_zone_only = vm["pressure_front_runner_zone_only"].as<bool>();
+    system.pressure_front_runner_ready_priority = vm["pressure_front_runner_ready_priority"].as<bool>();
+        system.pressure_lookahead_radius = vm["pressure_lookahead_radius"].as<int>();
+        system.pressure_lookahead_profile = vm["pressure_lookahead_profile"].as<string>();
+        system.pressure_lookahead_min_agents_per_station =
+            vm["pressure_lookahead_min_agents_per_station"].as<int>();
+    system.pibt_network_pressure_fraction = vm["pibt_network_pressure_fraction"].as<int>();
+    system.pibt_network_pressure_min_agents_per_station =
+        vm["pibt_network_pressure_min_agents_per_station"].as<int>();
+    system.pibt_global_front_runner_priority = vm["pibt_global_front_runner_priority"].as<bool>();
+    system.pibt_assignment_budget_factor = vm["pibt_assignment_budget_factor"].as<int>();
+    system.pibt_pressure_assignment_extension_factor =
+        vm["pibt_pressure_assignment_extension_factor"].as<int>();
+    system.pibt_front_runner_priority = vm["pibt_front_runner_priority"].as<bool>();
+    system.pibt_front_runner_ready_priority = vm["pibt_front_runner_ready_priority"].as<bool>();
+        system.native_failures_only = vm["native_failures_only"].as<bool>();
         system.stop_at_traffic_jam = vm["stop_at_traffic_jam"].as<bool>();
-        G.preprocessing(system.consider_rotation);
+        if (solver->get_name() == "PIBT" && G.has_shared_sortation_heuristics())
+            G.preprocessing_compact(system.consider_rotation);
+        else
+            G.preprocessing(system.consider_rotation);
         system.simulate(vm["simulation_time"].as<int>());
         return 0;
     }

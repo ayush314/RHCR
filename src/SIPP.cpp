@@ -147,9 +147,9 @@ Path SIPP::run(const BasicGraph& G, const State& start,
             for (auto interval : rt.getSafeIntervals(curr->state.location, location, min_timestep, std::get<1>(curr->interval) + 1))
             {
                 if (curr->state.orientation < 0)
-                    generate_node(interval, curr, G, location, min_timestep, -1, h_val);
+                    generate_node(interval, curr, G, rt, location, min_timestep, -1, h_val);
                 else
-                    generate_node(interval, curr, G, location, min_timestep, orientation, h_val);
+                    generate_node(interval, curr, G, rt, location, min_timestep, orientation, h_val);
             }
 
         }  // end for loop that generates successors
@@ -165,15 +165,15 @@ Path SIPP::run(const BasicGraph& G, const State& start,
             {
 				if (curr->state.orientation < 0)
 				{
-					generate_node(interval, curr, G, location, min_timestep, -1, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, -1, curr->h_val);
 				}
 				else
 				{
-					generate_node(interval, curr, G, location, min_timestep, orientation, curr->h_val);
-					generate_node(interval, curr, G, location, min_timestep, (orientation + 1) % 4, curr->h_val);
-					generate_node(interval, curr, G, location, min_timestep, (orientation + 3) % 4, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, orientation, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, (orientation + 1) % 4, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, (orientation + 3) % 4, curr->h_val);
 					if (std::get<1>(curr->interval) - curr->state.timestep > 1)
-						generate_node(interval, curr, G, location, min_timestep, (orientation + 2) % 4, curr->h_val);
+						generate_node(interval, curr, G, rt, location, min_timestep, (orientation + 2) % 4, curr->h_val);
 				}
             }
         }
@@ -343,14 +343,18 @@ Path SIPP::run(const BasicGraph& G, const State& start,
 
 
 void SIPP::generate_node(const Interval& interval, SIPPNode* curr, const BasicGraph& G,
-        int location, int min_timestep, int orientation, double h_val)
+        ReservationTable& rt, int location, int min_timestep, int orientation, double h_val)
 {
     int timestep  = max(std::get<0>(interval), min_timestep);
     int wait_time = timestep - curr->state.timestep - 1; // inlcude rotate time
+    int soft_cost = rt.getSoftVertexCost(location, timestep);
+    for (int wait_t = curr->state.timestep + 1; wait_t < timestep; wait_t++)
+        soft_cost += rt.getSoftVertexCost(curr->state.location, wait_t);
     double g_val = curr->g_val + wait_time * G.get_weight(curr->state.location, curr->state.location)
-                   + G.get_weight(curr->state.location, location);
+                   + G.get_weight(curr->state.location, location) + soft_cost;
 
-    int conflicts = std::get<2>(interval) + curr->conflicts;
+    int conflicts = std::get<2>(interval) - rt.getSoftVertexCost(location, timestep) +
+        curr->conflicts;
 
     // generate (maybe temporary) node
     auto next = new SIPPNode(State(location, timestep, orientation),
@@ -452,7 +456,6 @@ inline void SIPP::releaseClosedListNodes()
         delete (*it);
     allNodes_table.clear();
 }
-
 
 
 

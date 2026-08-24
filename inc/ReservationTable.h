@@ -15,8 +15,15 @@ public:
     bool prioritize_start;
     double runtime;
 
-    void clear() {sit.clear(); ct.clear(); cat.clear(); soft_vertex_ct.clear(); }
-	void copy(const ReservationTable& other) {sit = other.sit; ct = other.ct; cat = other.cat; soft_vertex_ct = other.soft_vertex_ct; }
+    void clear() { sit.clear(); ct.clear(); cat.clear(); soft_vertex_ct.clear();
+        initial_constraint_cache.clear(); initial_constraint_cache_ready = false; }
+	void copy(const ReservationTable& other) {
+        sit = other.sit; ct = other.ct; cat = other.cat;
+        soft_vertex_ct = other.soft_vertex_ct;
+        initial_constraint_cache = other.initial_constraint_cache;
+        initial_constraint_cache_ready = other.initial_constraint_cache_ready;
+    }
+    void prepareInitialConstraints(const list< tuple<int, int, int> >& initial_constraints);
     void build(const vector<Path*>& paths,
                const list< tuple<int, int, int> >& initial_constraints,
                const unordered_set<int>& high_priority_agents, int current_agent, int start_location);
@@ -40,9 +47,11 @@ public:
 	// functions for state-time A*
 	bool isConstrained(int curr_id, int next_id, int next_timestep) const;
 	bool isConflicting(int curr_id, int next_id, int next_timestep) const;
+	int getConflictCost(int curr_id, int next_id, int next_timestep) const;
+    int getSoftVertexCost(int location, int timestep) const;
 	int getHoldingTimeFromCT(int location) const;
     set<int> getConstrainedTimesteps(int location) const;
-    void addSoftVertexConstraint(int location, int t_min, int t_max);
+    void addSoftVertexConstraint(int location, int t_min, int t_max, int cost = 1);
 
 	ReservationTable(const BasicGraph& G): G(G) {}
 private:
@@ -51,9 +60,11 @@ private:
 	unordered_map<size_t, list<pair<int, int> > > ct; // location/edge -> time range
 	// Conflict Avoidance Table (CAT)
 	vector<vector<bool> > cat; //  (timestep, location) ->  have conflicts or not
-    unordered_map<size_t, list<pair<int, int> > > soft_vertex_ct; // location -> time range
+    unordered_map<size_t, list<tuple<int, int, int> > > soft_vertex_ct; // location -> time range and cost
 	// Safe Interval Table (SIT)
 	unordered_map<size_t, list<Interval > > sit; // location/edge -> [t_min, t_max), num_of_collisions
+	vector<vector<pair<int, int>>> initial_constraint_cache;
+    bool initial_constraint_cache_ready = false;
 
 	void updateSIT(size_t location); // update SIT at the gvien location
 	void mergeIntervals(list<Interval >& intervals) const; //merge successive safe intervals with the same number of conflicts.
@@ -61,7 +72,7 @@ private:
 
 
     void insertConstraint2SIT(int location, int t_min, int t_max);
-    void insertSoftConstraint2SIT(int location, int t_min, int t_max);
+    void insertSoftConstraint2SIT(int location, int t_min, int t_max, int cost = 1);
     void insertConstraints4starts(const vector<Path*>& paths, int current_agent, int start_location);	
 	void insertPath2CAT(const Path& path); //  insert the path to the conflict avoidance table
 	void addInitialConstraints(const list< tuple<int, int, int> >& initial_constraints, int current_agent);

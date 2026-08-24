@@ -13,6 +13,10 @@ results
 __pycache__/
 *.pyc
 *_heuristics_table.txt
+*_compact_heuristics.bin
 .idea
 lifelong
+workstation_policy_tests
+CTestTestfile.cmake
+Testing/
 *~
