@@ -38,6 +38,28 @@ class AggregateResultsTests(unittest.TestCase):
         self.assertEqual(clean["bootstrap_ci95_low"], 1.0)
         self.assertEqual(clean["bootstrap_ci95_high"], 1.0)
 
+    def test_hierarchical_effects_include_queue_tail(self) -> None:
+        rows = []
+        for seed in (6, 7):
+            for method, value in (
+                ("pibt_pressure_aware", 30.0),
+                ("pibt_phase_aware", 40.0),
+            ):
+                rows.append({
+                    "map": "sortation_small_p20",
+                    "agent_count": 100,
+                    "method": method,
+                    "pickup_layout_seed": 2,
+                    "seed": seed,
+                    "queue_wait_km_p95": value,
+                })
+        effects = aggregate_results.hierarchical_effect_rows(rows, iterations=100)
+        tail = next(row for row in effects if row["metric"] == "queue_wait_km_p95")
+        self.assertEqual(tail["paired_run_count"], 2)
+        self.assertEqual(tail["mean_difference"], -10.0)
+        self.assertEqual(tail["bootstrap_ci95_low"], -10.0)
+        self.assertEqual(tail["bootstrap_ci95_high"], -10.0)
+
     def test_manifest_filter_excludes_stale_cells(self) -> None:
         rows = [
             {"map": "alley", "agent_count": 20, "method": "pibt_pressure", "seed": 1},

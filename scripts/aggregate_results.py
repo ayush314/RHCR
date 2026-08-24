@@ -98,7 +98,7 @@ T_CRITICAL_95 = [
 
 HIERARCHICAL_METRICS = [
     "clean_completion", "time_to_stall", "service_rate", "queue_wait_rmst100",
-    "queue_wait_survival_50", "mean_target_queue_occupancy_per_station",
+    "queue_wait_km_p95", "queue_wait_survival_50", "mean_target_queue_occupancy_per_station",
     "mean_plan_ms", "peak_rss_kb",
 ]
 
