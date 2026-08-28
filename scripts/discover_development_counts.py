@@ -82,7 +82,7 @@ def main() -> int:
                 low = high
                 high *= 2
                 failed, terminal_type = run_probe(condition, method, high)
-            while terminal_type in {"empirical_stall", "native_failure_boundary"} and high - low > resolution:
+            while high - low > resolution:
                 middle = ((low + high) // (2 * resolution)) * resolution
                 if middle <= low:
                     middle = low + resolution
@@ -92,31 +92,15 @@ def main() -> int:
                     terminal_type = middle_type
                 else:
                     low = middle
-            if terminal_type in {"empirical_stall", "native_failure_boundary"}:
-                frontier = max(resolution, high - resolution)
+            frontier = max(resolution, low)
+            if terminal_type != "physical_capacity":
                 selected = (max(resolution, frontier - resolution), frontier, high)
-            elif terminal_type == "physical_capacity":
-                frontier = max(resolution, high - resolution)
-                while frontier > resolution:
-                    failed, frontier_type = run_probe(condition, method, frontier)
-                    if frontier_type != "physical_capacity":
-                        low = frontier
-                        break
-                    high = frontier
-                    frontier -= resolution
+            else:
                 selected = (
                     max(resolution, frontier - 2 * resolution),
                     max(resolution, frontier - resolution),
                     frontier,
                 )
-            else:
-                interval = max(resolution, low // 8)
-                selected = (
-                    max(resolution, low - 2 * interval),
-                    max(resolution, low - interval),
-                    low,
-                )
-                frontier = low
             boundaries.extend(selected)
             solver = "pbs" if method.startswith("pbs_") else "pibt"
             config.setdefault("development_solver_counts", {}).setdefault(condition, {})[solver] = \
