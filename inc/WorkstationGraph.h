@@ -3,6 +3,9 @@
 #include "BasicGraph.h"
 #include "WorkstationCommon.h"
 
+#include <cstddef>
+#include <cstdint>
+
 struct WorkstationStation
 {
     int station_id = -1;
@@ -17,12 +20,16 @@ struct WorkstationStation
 class WorkstationGrid : public BasicGraph
 {
 public:
+    ~WorkstationGrid() override;
+
     vector<int> pickup_endpoints;
     vector<WorkstationStation> stations;
     vector<int> free_start_cells;
 
     bool load_map(string fname) override;
     void preprocessing(bool consider_rotation);
+    void preprocessing_compact(bool consider_rotation);
+    bool has_shared_sortation_heuristics() const { return !movingai_map_path.empty(); }
 
     int to_id(int x, int y) const { return y * cols + x; }
     pair<int, int> to_xy(int loc) const { return make_pair(loc % cols, loc / cols); }
@@ -42,4 +49,14 @@ private:
     unordered_map<int, int> workstation_to_station;
     unordered_map<int, int> exit_to_station;
     unordered_map<int, int> zone_cell_to_station;
+    string movingai_map_path;
+    void* compact_mapping = nullptr;
+    size_t compact_mapping_size = 0;
+    unordered_map<int, const uint16_t*> compact_heuristics;
+
+    string compact_heuristic_path() const;
+    string full_text_heuristic_path() const;
+    bool load_compact_heuristics(const string& path);
+    void build_compact_heuristics(const string& text_path, const string& binary_path) const;
+    unordered_set<int> workstation_goal_roots() const;
 };

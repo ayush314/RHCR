@@ -1,0 +1,38 @@
+{
+  "development": {
+    "alley": [60, 80, 100],
+    "plaza": [120, 160, 200],
+    "sortation_medium_p20": [1200, 1600, 2000]
+  },
+  "human": {
+    "common": {
+      "alley": [20, 30, 40, 50, 60],
+      "plaza": [20, 40, 60, 80, 100]
+    },
+    "pibt_extended": {
+      "alley": [80, 100, 120, 140, 160],
+      "plaza": [120, 160, 200, 240, 280]
+    }
+  },
+  "sensitivity": [
+    {"name": "alley", "alley": [60, 80]},
+    {"name": "sortation_medium_p20", "sortation_medium_p20": [1600, 2000]}
+  ],
+  "sortation": {
+    "small": {
+      "p05": {"counts": [100, 200, 300, 400, 500, 600, 700, 800, 900], "terminal_type": "empirical"},
+      "p20": {"counts": [100, 200, 300, 400, 500, 600, 700, 800, 900], "terminal_type": "empirical"},
+      "p100": {"counts": [50, 100, 150, 200, 250, 300, 350, 400, 450], "terminal_type": "empirical"}
+    },
+    "medium": {
+      "p05": {"counts": [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000], "terminal_type": "empirical"},
+      "p20": {"counts": [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000], "terminal_type": "empirical"},
+      "p100": {"counts": [500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500], "terminal_type": "empirical"}
+    },
+    "large": {
+      "p05": {"counts": [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000], "terminal_type": "empirical"},
+      "p20": {"counts": [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000], "terminal_type": "empirical"},
+      "p100": {"counts": [2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000], "terminal_type": "empirical"}
+    }
+  }
+}

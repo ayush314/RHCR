@@ -1,27 +1,15 @@
 #include "PBS.h"
-#include <numeric>
 #include <ctime>
 #include <iostream>
-#include <limits>
 #include "PathTable.h"
 #include "WorkstationGraph.h"
-
-namespace
-{
-constexpr const char* kPressureAwarePolicy = "pressure_aware";
-constexpr int kDefaultPressureThreshold = 2;
-constexpr int kMissingPriorityValue = std::numeric_limits<int>::max() / 4;
-
-bool is_pressure_aware_policy(const std::string& policy)
-{
-    return policy == kPressureAwarePolicy;
-}
-
-}
+#include "WorkstationPolicy.h"
 
 
 void PBS::clear()
 {
+    path_planner.clear_transition_cost();
+    workstation_pressure_projection.clear();
     runtime = 0;
     runtime_rt = 0;
 	runtime_plan_paths = 0;
@@ -41,6 +29,7 @@ void PBS::clear()
     solution_cost = -2;
     // focal_list_threshold = -1;
     avg_path_length = -1;
+    solution.clear();
     paths.clear();
     nogood.clear();
     // focal_list.clear();
@@ -355,15 +344,13 @@ bool PBS::find_path(PBSNode* node, int agent)
 	rt.copy(initial_rt);
     rt.build(paths, initial_constraints, node->priorities.get_reachable_nodes(agent),
              agent, starts[agent].location);
-    bool used_softzone = maybe_add_workstation_softzone(rt, agent);
     runtime_get_higher_priority_agents += node->priorities.runtime;
 
     runtime_rt += (double)(std::clock() - t) / CLOCKS_PER_SEC;
 
     t = std::clock();
-    path = path_planner.run(G, starts[agent], goal_locations[agent], rt);
+    path = run_low_level_path(agent, rt);
 	runtime_plan_paths += (double)(std::clock() - t) / CLOCKS_PER_SEC;
-    path_cost = path_planner.path_cost;
     // t = std::clock();
     // rt.clear();
     // runtime_rt += (double)(std::clock() - t) / CLOCKS_PER_SEC;
@@ -376,6 +363,10 @@ bool PBS::find_path(PBSNode* node, int agent)
             std::cout << "Fail to find a path" << std::endl;
         return false;
     }
+    // Preserve public PBS accounting unless the proposed queue cost is active.
+    // Pressure-Aware uses the soft cost only to guide low-level path choice.
+    path_cost = is_pressure_aware_policy(station_policy) ?
+        get_path_cost(path) : path_planner.path_cost;
     double old_cost = 0;
     if (paths[agent] != nullptr)
         old_cost = get_path_cost(*paths[agent]);
@@ -393,118 +384,128 @@ bool PBS::find_path(PBSNode* node, int agent)
     return true;
 }
 
-tuple<int, int, int> PBS::distance_age_key(int agent) const
+WorkstationAgentContext PBS::projected_context_at(int agent, int local_t) const
 {
-    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
-    const auto& ctx = workstation_context[agent];
-    int dist = grid == nullptr ? kMissingPriorityValue : grid->distance_to_workstation(ctx.station_id, starts[agent].location);
-    int task_issue = ctx.task_issue_t >= 0 ? ctx.task_issue_t : kMissingPriorityValue;
-    return make_tuple(dist, task_issue, agent);
-}
+    if (agent < 0 || agent >= (int)workstation_context.size())
+        return WorkstationAgentContext();
+    WorkstationAgentContext context = workstation_context[agent];
+    if (agent >= (int)projected_goal_context.size() ||
+        agent >= (int)goal_locations.size() || paths[agent] == nullptr)
+        return context;
 
-tuple<int, int, int, int> PBS::pressure_aware_front_runner_key(int agent) const
-{
-    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
-    const auto& ctx = workstation_context[agent];
-    int boundary_entry = ctx.boundary_entry_t >= 0 ? ctx.boundary_entry_t : kMissingPriorityValue;
-    int dist = grid == nullptr ? kMissingPriorityValue : grid->distance_to_workstation(ctx.station_id, starts[agent].location);
-    int task_issue = ctx.task_issue_t >= 0 ? ctx.task_issue_t : kMissingPriorityValue;
-    return make_tuple(boundary_entry, dist, task_issue, agent);
-}
-
-int PBS::workstation_front_runner(int station_id) const
-{
-    int best_agent = -1;
-    tuple<int, int, int, int> best_key;
-    for (int agent = 0; agent < num_of_agents; agent++)
+    int goal_index = 0;
+    const Path& path = *paths[agent];
+    int final_t = std::min(local_t, (int)path.size() - 1);
+    for (int t = 0; t <= final_t && goal_index < (int)goal_locations[agent].size(); t++)
     {
-        const auto& ctx = workstation_context[agent];
-        if (ctx.phase != WorkstationAgentPhase::TO_STATION || ctx.station_id != station_id)
-            continue;
-        auto key = pressure_aware_front_runner_key(agent);
-        if (best_agent < 0 || key < best_key)
-        {
-            best_agent = agent;
-            best_key = key;
-        }
+        if (path[t].location == goal_locations[agent][goal_index].first)
+            goal_index++;
     }
-    return best_agent;
+    if (goal_index < (int)projected_goal_context[agent].size())
+        return projected_goal_context[agent][goal_index];
+    if (!projected_goal_context[agent].empty())
+        context = projected_goal_context[agent].back();
+    return context;
 }
 
-int PBS::effective_workstation_pressure_threshold() const
+WorkstationAgentContext PBS::projected_context_for_goal(
+    int agent, int goal_id) const
 {
-    if (workstation_pressure_threshold > 0)
-        return workstation_pressure_threshold;
-    return kDefaultPressureThreshold;
+    if (agent < 0 || agent >= static_cast<int>(workstation_context.size()))
+        return WorkstationAgentContext();
+    WorkstationAgentContext context = workstation_context[agent];
+    if (agent >= static_cast<int>(projected_goal_context.size()) ||
+        projected_goal_context[agent].empty())
+    {
+        return context;
+    }
+    return workstation_context_for_goal(
+        context, projected_goal_context[agent], goal_id);
 }
 
-bool PBS::workstation_pressure_active(int pressure) const
+int PBS::workstation_transition_cost(
+    int agent, const State& current, const State& next, int goal_id) const
 {
-    return pressure >= effective_workstation_pressure_threshold();
-}
-
-bool PBS::maybe_add_workstation_softzone(ReservationTable& rt, int agent)
-{
-    if (!is_pressure_aware_policy(station_policy) || workstation_context.size() != (size_t)num_of_agents)
-        return false;
-
+    if (!is_pressure_aware_policy(station_policy) ||
+        workstation_context.size() != static_cast<size_t>(num_of_agents) ||
+        next.timestep > window)
+    {
+        return 0;
+    }
     const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
     if (grid == nullptr)
-        return false;
+        return 0;
 
-    const auto& ctx = workstation_context[agent];
-    bool used = false;
-    for (int station_id = 0; station_id < (int)grid->stations.size(); station_id++)
+    const int local_t = std::max(current.timestep, 0);
+    if (local_t >= static_cast<int>(workstation_pressure_projection.size()))
+        return 0;
+    const WorkstationAgentContext context =
+        projected_context_for_goal(agent, goal_id);
+    return workstation_pressure_action_cost_from_base(
+        *grid, workstation_pressure_projection[local_t], context,
+        agent, current.location, next.location);
+}
+
+void PBS::prepare_workstation_pressure_projection(int agent)
+{
+    workstation_pressure_projection.clear();
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    if (!is_pressure_aware_policy(station_policy) || grid == nullptr ||
+        workstation_context.size() != static_cast<size_t>(num_of_agents))
     {
-        int pressure = 0;
-        const auto& station = grid->stations[station_id];
-        for (int other = 0; other < num_of_agents; other++)
-        {
-            int loc = starts[other].location;
-            bool counted = false;
-            if (std::find(station.approach_cells.begin(), station.approach_cells.end(), loc) != station.approach_cells.end())
-            {
-                counted = true;
-            }
-            else if (std::find(station.buffer_cells.begin(), station.buffer_cells.end(), loc) != station.buffer_cells.end() ||
-                     std::find(station.standby_cells.begin(), station.standby_cells.end(), loc) != station.standby_cells.end())
-            {
-                counted = true;
-            }
-            else if (std::find(station.exit_cells.begin(), station.exit_cells.end(), loc) != station.exit_cells.end())
-            {
-                counted = true;
-            }
-            if (counted)
-                pressure++;
-        }
-        if (!workstation_pressure_active(pressure))
-            continue;
-
-        int front = workstation_front_runner(station_id);
-        bool privileged =
-            ctx.phase == WorkstationAgentPhase::TO_STATION &&
-            front == agent;
-        if (privileged)
-            continue;
-
-        for (int loc : station.approach_cells)
-            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
-        for (int loc : station.standby_cells)
-            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
-        for (int loc : station.buffer_cells)
-            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
-        for (int loc : station.exit_cells)
-            rt.addSoftVertexConstraint(loc, 0, rt.window + 1);
-        used = true;
+        return;
     }
 
-    return used;
+    workstation_pressure_projection.reserve(window);
+    for (int local_t = 0; local_t < window; local_t++)
+    {
+        vector<int> locations(num_of_agents);
+        vector<WorkstationAgentContext> contexts(num_of_agents);
+        for (int other = 0; other < num_of_agents; other++)
+        {
+            if (other != agent && other < static_cast<int>(paths.size()) &&
+                paths[other] != nullptr && !paths[other]->empty())
+            {
+                const Path& path = *paths[other];
+                const int path_t = std::min(
+                    local_t, static_cast<int>(path.size()) - 1);
+                locations[other] = path[path_t].location;
+                contexts[other] = projected_context_at(other, local_t);
+            }
+            else
+            {
+                locations[other] = starts[other].location;
+                contexts[other] = workstation_context[other];
+            }
+        }
+        workstation_pressure_projection.push_back(
+            evaluate_workstation_pressure_without_agent(
+                *grid, locations, contexts, agent));
+    }
+}
+
+Path PBS::run_low_level_path(int agent, ReservationTable& reservations)
+{
+    path_planner.clear_transition_cost();
+    if (is_pressure_aware_policy(station_policy))
+    {
+        prepare_workstation_pressure_projection(agent);
+        path_planner.set_transition_cost(
+            [this, agent](const State& current, const State& next, int goal_id) {
+                return workstation_transition_cost(
+                    agent, current, next, goal_id);
+            });
+    }
+    Path path = path_planner.run(
+        G, starts[agent], goal_locations[agent], reservations);
+    path_planner.clear_transition_cost();
+    workstation_pressure_projection.clear();
+    return path;
 }
 
 bool PBS::prefer_workstation_branch(const Conflict& conflict, pair<int, int>& preferred_priority) const
 {
-    if (station_policy == "vanilla" || workstation_context.size() != (size_t)num_of_agents)
+    if (workstation_context.size() != (size_t)num_of_agents)
         return false;
 
     const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
@@ -513,39 +514,18 @@ bool PBS::prefer_workstation_branch(const Conflict& conflict, pair<int, int>& pr
 
     int a1, a2, v1, v2, t;
     std::tie(a1, a2, v1, v2, t) = conflict;
-    (void)t;
 
-    const auto& c1 = workstation_context[a1];
-    const auto& c2 = workstation_context[a2];
-    if (c1.station_id < 0 || c1.station_id != c2.station_id)
-        return false;
-    if (!grid->conflict_in_station_microzone(c1.station_id, v1, v2))
-        return false;
-
-    bool a1_station_bound = c1.phase == WorkstationAgentPhase::TO_STATION;
-    bool a2_station_bound = c2.phase == WorkstationAgentPhase::TO_STATION;
-    bool a1_clearing = c1.phase == WorkstationAgentPhase::TO_EXIT;
-    bool a2_clearing = c2.phase == WorkstationAgentPhase::TO_EXIT;
-
-    auto higher_first = [&](int higher, int lower) {
-        preferred_priority = make_pair(lower, higher);
-        return true;
-    };
-
-    if (a1_clearing && a2_station_bound)
-        return higher_first(a1, a2);
-    if (a2_clearing && a1_station_bound)
-        return higher_first(a2, a1);
-    if (!(a1_station_bound && a2_station_bound))
-        return false;
-
-    if (station_policy == "distance_age")
+    const auto c1 = projected_context_at(a1, t);
+    const auto c2 = projected_context_at(a2, t);
+    if (workstation_mandatory_dwell_preferred_priority(
+            a1, c1.phase, a2, c2.phase, preferred_priority))
     {
-        auto k1 = distance_age_key(a1);
-        auto k2 = distance_age_key(a2);
-        return (k1 <= k2) ? higher_first(a1, a2) : higher_first(a2, a1);
+        return true;
     }
-    return false;
+    if (!uses_workstation_departure_priority(station_policy))
+        return false;
+    return workstation_preferred_priority(
+        station_policy, a1, c1.phase, a2, c2.phase, preferred_priority);
 }
 
 
@@ -748,21 +728,7 @@ bool PBS::generate_root_node()
     }
 
 
-    vector<int> root_order(num_of_agents);
-    std::iota(root_order.begin(), root_order.end(), 0);
-    if (!dummy_start->priorities.empty())
-    {
-        vector<int> lower_nodes(num_of_agents, -1);
-        for (int i = 0; i < num_of_agents; i++)
-            dummy_start->priorities.update_number_of_lower_nodes(lower_nodes, i);
-        std::sort(root_order.begin(), root_order.end(), [&](int lhs, int rhs) {
-            if (lower_nodes[lhs] != lower_nodes[rhs])
-                return lower_nodes[lhs] > lower_nodes[rhs];
-            return lhs < rhs;
-        });
-    }
-
-    for (int i : root_order)
+    for (int i = 0; i < num_of_agents; i++)
 	{
         if (paths[i] != nullptr)
             continue;
@@ -770,23 +736,30 @@ bool PBS::generate_root_node()
         double path_cost;
         int start_location  = starts[i].location;
         clock_t t = std::clock();
-		rt.copy(initial_rt);
+        rt.copy(initial_rt);
         rt.build(paths, initial_constraints, dummy_start->priorities.get_reachable_nodes(i), i, start_location);
         runtime_get_higher_priority_agents += dummy_start->priorities.runtime;
         runtime_rt += (double)(std::clock() - t) / CLOCKS_PER_SEC;
         t = std::clock();
-        path = path_planner.run(G, starts[i], goal_locations[i], rt);
+        path = run_low_level_path(i, rt);
 		runtime_plan_paths += (double)(std::clock() - t) / CLOCKS_PER_SEC;
-        path_cost = path_planner.path_cost;
-        rt.clear();
+		rt.clear();
         LL_num_expanded += path_planner.num_expanded;
         LL_num_generated += path_planner.num_generated;
 
         if (path.empty())
         {
-            std::cout << "NO SOLUTION EXISTS";
+            std::cout << "NO SOLUTION EXISTS for agent " << i;
+            if (screen >= 2)
+            {
+                std::cout << " from " << starts[i] << " with goals";
+                for (const auto& goal : goal_locations[i])
+                    std::cout << " <" << goal.first << "," << goal.second << ">";
+            }
             return false;
         }
+        path_cost = is_pressure_aware_policy(station_policy) ?
+            get_path_cost(path) : path_planner.path_cost;
 
         dummy_start->paths.emplace_back(i, path);
         paths[i] = &dummy_start->paths.back().second;

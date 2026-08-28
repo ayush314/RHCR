@@ -12,8 +12,8 @@ from pathlib import Path
 import run_comparison
 
 
-DENSITIES = (5, 10, 20, 50, 100)
-METHODS = ("pibt_vanilla", "pibt_distance_age", "pibt_pressure")
+DENSITIES = (5, 20, 100)
+METHODS = ("pibt_vanilla", "pibt_departure_aware", "pibt_pressure_aware")
 MAP_CONFIG = {
     "small": {
         "stem": "sortation_small",
@@ -32,6 +32,16 @@ MAP_CONFIG = {
         "count_option": "--lorr-sortation-medium-counts",
         "benchmark_option": "--lorr-sortation-medium-benchmark",
         "name_option": "--lorr-sortation-medium-name",
+    },
+    "large": {
+        "stem": "sortation_large",
+        "label": "lorr_sortation_large",
+        "start_count": 2500,
+        "resolution": 500,
+        "ladder_resolution": 250,
+        "count_option": "--lorr-sortation-large-counts",
+        "benchmark_option": "--lorr-sortation-large-benchmark",
+        "name_option": "--lorr-sortation-large-name",
     },
 }
 
@@ -72,6 +82,8 @@ def load_cell_statuses(
     density: int,
     count: int,
     seeds: list[int],
+    *,
+    require_all: bool = True,
 ) -> dict[str, list[dict]]:
     statuses: dict[str, list[dict]] = {}
     for method in METHODS:
@@ -79,8 +91,15 @@ def load_cell_statuses(
         for seed in seeds:
             path = status_path(root, map_key, density, count, method, seed)
             if not path.exists():
-                raise RuntimeError(f"missing result status: {path}")
+                if require_all:
+                    raise RuntimeError(f"missing result status: {path}")
+                continue
             entries.append(json.loads(path.read_text()))
+        if not entries:
+            raise RuntimeError(
+                f"no result statuses for {condition_label(map_key, density)} "
+                f"agents={count} method={method}"
+            )
         statuses[method] = entries
     return statuses
 
@@ -97,6 +116,21 @@ def method_clean_counts(statuses: dict[str, list[dict]]) -> dict[str, int]:
         method: sum(entry.get("status") == "clean" for entry in entries)
         for method, entries in statuses.items()
     }
+
+
+def has_known_clean_status(
+    root: Path,
+    map_key: str,
+    density: int,
+    count: int,
+    seeds: list[int],
+) -> bool:
+    return any(
+        path.exists() and json.loads(path.read_text()).get("status") == "clean"
+        for method in METHODS
+        for seed in seeds
+        for path in (status_path(root, map_key, density, count, method, seed),)
+    )
 
 
 def rounded_probe(value: float, resolution: int, capacity: int) -> int:
@@ -153,6 +187,9 @@ class DensityExperiment:
     ) -> list[str]:
         config = MAP_CONFIG[map_key]
         label = condition_label(map_key, density)
+        jobs = self.args.jobs
+        if map_key == "large" and density == 100:
+            jobs = min(jobs, self.args.large_100_jobs)
         command = [
             sys.executable,
             str(self.repo_root / "scripts" / "run_comparison.py"),
@@ -163,9 +200,10 @@ class DensityExperiment:
             "--planning-window", str(self.args.planning_window),
             "--simulation-window", str(self.args.simulation_window),
             "--service-time", str(self.args.service_time),
+            "--lra-fallback",
             "--cutoff-time", str(self.args.cutoff_time),
             "--process-timeout", str(self.args.process_timeout),
-            "--jobs", str(self.args.jobs),
+            "--jobs", str(jobs),
             "--screen", "0",
             "--methods", ",".join(METHODS),
             "--alley-counts", "",
@@ -190,6 +228,13 @@ class DensityExperiment:
         subprocess.run(self.runner_command(map_key, density, counts, seeds), check=True)
 
     def terminal(self, map_key: str, density: int, count: int, seeds: list[int]) -> bool:
+        if has_known_clean_status(self.root, map_key, density, count, seeds):
+            print(
+                f"[frontier] {condition_label(map_key, density)} agents={count} "
+                "known_clean=true",
+                flush=True,
+            )
+            return False
         self.run_counts(map_key, density, [count], seeds)
         statuses = load_cell_statuses(self.root, map_key, density, count, seeds)
         clean = method_clean_counts(statuses)
@@ -210,7 +255,7 @@ class DensityExperiment:
                     str(self.binary),
                     "--scenario", "WORKSTATION",
                     "--benchmark", str(benchmark_path(self.repo_root, map_key, density)),
-                    "--solver", "PIBT",
+                    "--solver", "PIBT2",
                     "--pibt_policy", "vanilla",
                     "--agentNum", "1",
                     "--simulation_time", str(self.args.simulation_window),
@@ -266,7 +311,7 @@ class DensityExperiment:
     def lock_five_percent_ladder(self, map_key: str) -> tuple[list[int], int, str]:
         config = MAP_CONFIG[map_key]
         start = config["start_count"]
-        resolution = config["resolution"]
+        resolution = config.get("ladder_resolution", config["resolution"])
         capacity = load_capacity(benchmark_path(self.repo_root, map_key, 5))
         _low, high = self.bracket_five_percent(map_key)
         target_intervals = 10
@@ -297,22 +342,20 @@ class DensityExperiment:
             if terminal_count > capacity:
                 step -= resolution
                 continue
-            last_fails = self.terminal(map_key, 5, reported_last, self.discovery_seeds)
-            terminal_fails = self.terminal(map_key, 5, terminal_count, self.discovery_seeds)
-            if last_fails:
+            if self.terminal(map_key, 5, reported_last, self.discovery_seeds):
                 step -= resolution
                 continue
+            terminal_fails = self.terminal(map_key, 5, terminal_count, self.discovery_seeds)
             if not terminal_fails:
                 step += resolution
                 continue
             if step <= 0:
                 break
 
-            last_fails_full = self.terminal(map_key, 5, reported_last, self.full_seeds)
-            terminal_fails_full = self.terminal(map_key, 5, terminal_count, self.full_seeds)
-            if last_fails_full:
+            if self.terminal(map_key, 5, reported_last, self.full_seeds):
                 step -= resolution
                 continue
+            terminal_fails_full = self.terminal(map_key, 5, terminal_count, self.full_seeds)
             if not terminal_fails_full:
                 step += resolution
                 continue
@@ -396,9 +439,19 @@ class DensityExperiment:
             "planning_window": self.args.planning_window,
             "simulation_window": self.args.simulation_window,
             "service_time": self.args.service_time,
+            **run_comparison.PRESSURE_DEFINITION,
             "cutoff_time": self.args.cutoff_time,
             "process_timeout": self.args.process_timeout,
             "jobs": self.args.jobs,
+            "jobs_by_density": {
+                condition_label(map_key, density): (
+                    min(self.args.jobs, self.args.large_100_jobs)
+                    if map_key == "large" and density == 100
+                    else self.args.jobs
+                )
+                for map_key in self.args.maps
+                for density in DENSITIES
+            },
             "stop_at_traffic_jam": True,
             "binary": str(self.binary),
             "binary_sha256": run_comparison.sha256_file(self.binary),
@@ -430,7 +483,12 @@ class DensityExperiment:
                         })
                     continue
                 statuses = load_cell_statuses(
-                    self.root, map_key, density, count, self.full_seeds
+                    self.root,
+                    map_key,
+                    density,
+                    count,
+                    self.full_seeds,
+                    require_all=entry["terminal_mode"] == "traffic_jam",
                 )
                 for method, method_statuses in statuses.items():
                     failures = sorted({
@@ -485,8 +543,8 @@ def main() -> int:
     parser.add_argument("--stage", choices=("precompute", "discover", "full", "all"), default="all")
     parser.add_argument("--map-set", default="small,medium")
     parser.add_argument("--discovery-seed-count", type=int, default=3)
-    parser.add_argument("--seed-count", type=int, default=10)
-    parser.add_argument("--simulation-time", type=int, default=500)
+    parser.add_argument("--seed-count", type=int, default=5)
+    parser.add_argument("--simulation-time", type=int, default=1000)
     parser.add_argument("--planning-window", type=int, default=20)
     parser.add_argument("--simulation-window", type=int, default=5)
     parser.add_argument("--service-time", type=int, default=3)
@@ -494,6 +552,7 @@ def main() -> int:
     parser.add_argument("--process-timeout", type=int, default=1800)
     parser.add_argument("--precompute-timeout", type=int, default=14400)
     parser.add_argument("--jobs", type=int, default=6)
+    parser.add_argument("--large-100-jobs", type=int, default=3)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     args.maps = [part.strip() for part in args.map_set.split(",") if part.strip()]
@@ -502,6 +561,8 @@ def main() -> int:
         parser.error(f"unknown maps in --map-set: {','.join(unknown_maps)}")
     if args.discovery_seed_count < 1 or args.seed_count < args.discovery_seed_count:
         parser.error("seed counts must satisfy 1 <= discovery <= full")
+    if args.jobs < 1 or args.large_100_jobs < 1:
+        parser.error("job counts must be positive")
 
     experiment = DensityExperiment(args)
     if args.stage in {"precompute", "all"}:

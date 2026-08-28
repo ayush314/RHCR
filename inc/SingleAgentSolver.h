@@ -2,10 +2,14 @@
 #include "BasicGraph.h"
 #include "ReservationTable.h"
 
+#include <functional>
+
 
 class SingleAgentSolver
 {
 public:
+	using TransitionCostFunction =
+		std::function<int(const State&, const State&, int)>;
 
 	bool prioritize_start;
 	double suboptimal_bound;
@@ -28,9 +32,20 @@ public:
 
     virtual Path run(const BasicGraph& G, const State& start, const vector<pair<int, int> >& goal_location, ReservationTable& RT) = 0;
 	virtual string getName() const = 0;
+	void set_transition_cost(TransitionCostFunction cost)
+	{
+		transition_cost = std::move(cost);
+	}
+	void clear_transition_cost() { transition_cost = TransitionCostFunction(); }
+	int get_transition_cost(const State& current, const State& next,
+		int goal_id) const
+	{
+		return transition_cost ? transition_cost(current, next, goal_id) : 0;
+	}
 	SingleAgentSolver(): suboptimal_bound(1), num_expanded(0), num_generated(0), min_f_val(0), num_of_conf(0) {}
     virtual ~SingleAgentSolver()= default;
 
 protected:
 	double focal_bound;
+	TransitionCostFunction transition_cost;
 };

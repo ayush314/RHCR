@@ -97,18 +97,31 @@ Path StateTimeAStar::run(const BasicGraph& G, const State& start,
 			return path;
 		}
 
+        const bool mandatory_colocated_hold =
+            goal_location[curr->goal_id].first == curr->state.location;
+
         for (const auto& next_state: G.get_neighbors(curr->state))
         {
+            if (mandatory_colocated_hold &&
+                next_state.location != curr->state.location)
+            {
+                continue;
+            }
             if (!rt.isConstrained(curr->state.location, next_state.location, next_state.timestep))
             {
                 // compute cost to next_id via curr node
-                double next_g_val = curr->g_val + G.get_weight(curr->state.location, next_state.location);
+                int soft_cost = rt.getSoftVertexCost(next_state.location, next_state.timestep);
+                int transition_cost = get_transition_cost(
+                    curr->state, next_state, curr->goal_id);
+                double next_g_val = curr->g_val +
+                    G.get_weight(curr->state.location, next_state.location) +
+                    soft_cost + transition_cost;
                 double next_h_val = compute_h_value(G, next_state.location, curr->goal_id, goal_location);
                 if (next_h_val >= INT_MAX) // This vertex cannot reach the goal vertex
                     continue;
                 int next_conflicts = curr->conflicts;
-				if (rt.isConflicting(curr->state.location, next_state.location, next_state.timestep))
-					next_conflicts++;
+				next_conflicts += rt.getConflictCost(
+				    curr->state.location, next_state.location, next_state.timestep) - soft_cost;
 
                 // generate (maybe temporary) node
                 auto next = new StateTimeAStarNode(next_state, next_g_val, next_h_val, curr, next_conflicts);

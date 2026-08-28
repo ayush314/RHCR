@@ -40,9 +40,11 @@ public:
 	// functions for state-time A*
 	bool isConstrained(int curr_id, int next_id, int next_timestep) const;
 	bool isConflicting(int curr_id, int next_id, int next_timestep) const;
+	int getConflictCost(int curr_id, int next_id, int next_timestep) const;
+    int getSoftVertexCost(int location, int timestep) const;
 	int getHoldingTimeFromCT(int location) const;
     set<int> getConstrainedTimesteps(int location) const;
-    void addSoftVertexConstraint(int location, int t_min, int t_max);
+    void addSoftVertexConstraint(int location, int t_min, int t_max, int cost = 1);
 
 	ReservationTable(const BasicGraph& G): G(G) {}
 private:
@@ -51,7 +53,7 @@ private:
 	unordered_map<size_t, list<pair<int, int> > > ct; // location/edge -> time range
 	// Conflict Avoidance Table (CAT)
 	vector<vector<bool> > cat; //  (timestep, location) ->  have conflicts or not
-    unordered_map<size_t, list<pair<int, int> > > soft_vertex_ct; // location -> time range
+    unordered_map<size_t, list<tuple<int, int, int> > > soft_vertex_ct; // location -> time range and cost
 	// Safe Interval Table (SIT)
 	unordered_map<size_t, list<Interval > > sit; // location/edge -> [t_min, t_max), num_of_collisions
 
@@ -61,7 +63,7 @@ private:
 
 
     void insertConstraint2SIT(int location, int t_min, int t_max);
-    void insertSoftConstraint2SIT(int location, int t_min, int t_max);
+    void insertSoftConstraint2SIT(int location, int t_min, int t_max, int cost = 1);
     void insertConstraints4starts(const vector<Path*>& paths, int current_agent, int start_location);	
 	void insertPath2CAT(const Path& path); //  insert the path to the conflict avoidance table
 	void addInitialConstraints(const list< tuple<int, int, int> >& initial_constraints, int current_agent);

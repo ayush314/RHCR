@@ -1,6 +1,8 @@
 #include "LRAStar.h"
 
-LRAStar::LRAStar(const BasicGraph &G, SingleAgentSolver& path_planner): MAPFSolver(G, path_planner), num_expanded(0), num_generated(0) {}
+LRAStar::LRAStar(const BasicGraph &G, SingleAgentSolver& path_planner):
+    MAPFSolver(G, path_planner), simulation_window(0), num_wait_commands(0),
+    num_expanded(0), num_generated(0) {}
 
 
 bool LRAStar::run(const vector<State>& starts, const vector< vector<pair<int, int> > >& goal_locations, int time_limit)
@@ -172,6 +174,36 @@ void LRAStar::resolve_conflicts(const vector<Path>& input_paths)
     for (int t = 1; t <= simulation_window; t++)
     {
         next_locations.clear();
+        vector<int> intended_locations(num_of_agents);
+        unordered_map<int, int> current_owners;
+        for (int agent = 0; agent < num_of_agents; agent++)
+        {
+            if (path_pointers[agent] >= (int)input_paths[agent].size())
+                path_pointers[agent] = (int)input_paths[agent].size() - 1;
+            intended_locations[agent] = input_paths[agent][path_pointers[agent]].location;
+            current_owners[solution[agent][t - 1].location] = agent;
+        }
+
+        // The original LRA repair handled vertex contention but could execute an
+        // undirected edge swap. Mark both members of every proposed swap to wait.
+        vector<bool> edge_swap_wait(num_of_agents, false);
+        for (int agent = 0; agent < num_of_agents; agent++)
+        {
+            int current = solution[agent][t - 1].location;
+            int intended = intended_locations[agent];
+            if (current == intended)
+                continue;
+            auto owner = current_owners.find(intended);
+            if (owner == current_owners.end())
+                continue;
+            int other = owner->second;
+            if (other != agent && intended_locations[other] == current)
+            {
+                edge_swap_wait[agent] = true;
+                edge_swap_wait[other] = true;
+            }
+        }
+
         vector<int> agents_list(num_of_agents);
         for (int k = 0; k < num_of_agents; k++)
         {
@@ -180,6 +212,12 @@ void LRAStar::resolve_conflicts(const vector<Path>& input_paths)
         std::random_shuffle(agents_list.begin(), agents_list.end());
         for (auto agent : agents_list)
         {
+			if (edge_swap_wait[agent])
+			{
+				wait_command(agent, t, path_pointers);
+                next_locations[solution[agent][t].location] = agent;
+                continue;
+			}
 			if (path_pointers[agent] >= (int) input_paths[agent].size())
 			{
 				path_pointers[agent] = (int) input_paths[agent].size() - 1;

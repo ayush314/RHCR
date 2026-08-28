@@ -15,12 +15,37 @@ from pathlib import Path
 
 METHODS = {
     "pbs_vanilla": {"solver": "PBS", "station_policy": "vanilla"},
-    "pbs_distance_age": {"solver": "PBS", "station_policy": "distance_age"},
+    "pbs_departure_aware": {"solver": "PBS", "station_policy": "departure_aware"},
     "pbs_pressure_aware": {"solver": "PBS", "station_policy": "pressure_aware"},
-    "pibt_vanilla": {"solver": "PIBT", "pibt_policy": "vanilla"},
-    "pibt_distance_age": {"solver": "PIBT", "pibt_policy": "distance_age"},
-    "pibt_pressure": {"solver": "PIBT", "pibt_policy": "pressure"},
+    "pibt_vanilla": {"solver": "PIBT2", "pibt_policy": "vanilla"},
+    "pibt_departure_aware": {"solver": "PIBT2", "pibt_policy": "departure_aware"},
+    "pibt_pressure_aware": {"solver": "PIBT2", "pibt_policy": "pressure_aware"},
+    "pibt2_vanilla": {"solver": "PIBT2", "pibt_policy": "vanilla"},
+    "pibt2_departure_aware": {"solver": "PIBT2", "pibt_policy": "departure_aware"},
+    "pibt2_pressure_aware": {"solver": "PIBT2", "pibt_policy": "pressure_aware"},
+    "pibt_legacy_vanilla": {"solver": "PIBT", "pibt_policy": "vanilla"},
+    "pibt_legacy_departure_aware": {"solver": "PIBT", "pibt_policy": "departure_aware"},
+    "pibt_legacy_pressure_aware": {"solver": "PIBT", "pibt_policy": "pressure_aware"},
 }
+PRESSURE_DEFINITION = {
+    "pressure_population": "all_agents_in_queue_region",
+    "pressure_evaluation": "projected_each_step",
+    "pressure_action_timing": "state_t_scores_action_t_plus_1",
+    "pressure_task_metadata": "executed_only",
+    "pressure_threshold": 3,
+    "pressure_queue_cost": 2,
+    "pressure_privileged_inbound_count": 2,
+    "pressure_priority_parent": "departure_aware",
+    "departure_aware_protected_phases": ["TO_EXIT"],
+    "mandatory_service_dwell": True,
+    "mandatory_service_dwell_handling": "policy_independent",
+    "service_priority_enabled": False,
+}
+PUBLICATION_METHODS = (
+    "pbs_vanilla", "pbs_departure_aware", "pbs_pressure_aware",
+    "pibt_vanilla", "pibt_departure_aware", "pibt_pressure_aware",
+)
+PIBT_RANDOMNESS = "simulation_seed_and_absolute_destination_timestep"
 RUN_OUTPUT_FILES = (
     "config.txt",
     "paths.txt",
@@ -69,8 +94,32 @@ def signatures_match(existing: dict | None, expected: dict) -> bool:
     return comparable == expected
 
 
+def status_is_reusable(existing: dict | None, run_signature: dict) -> bool:
+    if not existing or existing.get("status") not in {"clean", "failed"}:
+        return False
+    return_code = existing.get("return_code")
+    if isinstance(return_code, int) and return_code < 0:
+        return False
+    return signatures_match(existing.get("run_signature"), run_signature)
+
+
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def git_provenance(repo_root: Path) -> dict[str, str | bool]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_root,
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        dirty = bool(subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo_root,
+            check=True, capture_output=True, text=True,
+        ).stdout.strip())
+        return {"source_git_commit": commit, "source_git_dirty": dirty}
+    except (OSError, subprocess.CalledProcessError):
+        return {"source_git_commit": "unknown", "source_git_dirty": True}
 
 
 def reset_run_outputs(cell_dir: Path) -> None:
@@ -101,6 +150,8 @@ def classify_run(log_path: Path, summary_path: Path, return_code: int, timed_out
         return "failed", "wall_timeout"
     if return_code != 0:
         log_text = log_path.read_text(errors="ignore") if log_path.exists() else ""
+        if "valid start cells" in log_text:
+            return "failed", "physical_capacity"
         if "Failed to repair workstation commitment conflicts" in log_text:
             return "failed", "internal_repair_failure"
         if "Invalid move" in log_text:
@@ -114,6 +165,8 @@ def classify_run(log_path: Path, summary_path: Path, return_code: int, timed_out
     with summary_path.open() as fh:
         summary = next(csv.DictReader(fh), {})
     termination_reason = summary.get("termination_reason", "")
+    if summary.get("clean_completion") == "1":
+        return "clean", "clean"
     if termination_reason == "traffic_jam":
         return "failed", "traffic_jam"
     if termination_reason == "solver_failure":
@@ -128,59 +181,40 @@ def classify_run(log_path: Path, summary_path: Path, return_code: int, timed_out
         return "failed", "invalid_move"
     if "has a conflict with drive" in log_text or "left workstation early" in log_text:
         return "failed", "fatal_collision"
-    return "clean", "clean"
+    return "failed", termination_reason or "unclean_termination"
 
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
 
     parser = argparse.ArgumentParser(description="Run the paper comparison on the workstation benchmarks.")
-    parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed0to19"))
+    parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed6to25"))
     parser.add_argument("--binary", default=str(repo_root / "lifelong"))
-    parser.add_argument("--seed-start", type=int, default=1)
+    parser.add_argument("--seed-start", type=int, default=6)
     parser.add_argument("--seed-count", type=int, default=20)
     parser.add_argument("--seed-list", type=parse_seed_list)
-    parser.add_argument("--simulation-time", type=int, default=5000)
+    parser.add_argument("--pickup-layout-seed", type=int, default=1)
+    parser.add_argument("--simulation-time", type=int, default=1000)
     parser.add_argument("--planning-window", type=int, default=20)
     parser.add_argument("--simulation-window", type=int, default=5)
     parser.add_argument("--service-time", type=int, default=3)
-    parser.add_argument("--pressure-threshold", type=int)
-    parser.add_argument("--pibt-pressure-entry-penalty", type=float, default=2.0)
-    parser.add_argument("--pibt-pressure-inbound-limit", type=int, default=4)
-    parser.add_argument("--pibt-pressure-profile", choices=("none", "half", "severe", "thirds"), default="thirds")
-    parser.add_argument("--pibt-wait-penalty", type=float, default=2.0)
-    parser.add_argument("--pibt-exit-bonus", type=float, default=1.0)
-    parser.add_argument("--pibt-front-bonus", type=float, default=3.0)
-    parser.add_argument("--pibt-soft-collision-penalty", type=float, default=0.0)
-    parser.add_argument("--pibt-hindrance", dest="pibt_hindrance", action="store_true")
-    parser.add_argument("--no-pibt-hindrance", dest="pibt_hindrance", action="store_false")
-    parser.add_argument("--pibt-regret-iterations", type=int, default=1)
-    parser.add_argument("--pibt-regret-weight", type=float, default=0.5)
+    fallback_group = parser.add_mutually_exclusive_group()
+    fallback_group.add_argument(
+        "--lra-fallback", "--allow-fallbacks", dest="lra_fallback",
+        action="store_true", help="Enable the common failure-time LRA fallback (default).",
+    )
+    fallback_group.add_argument(
+        "--no-lra-fallback", dest="lra_fallback", action="store_false",
+        help="Disable LRA so a native solver failure terminates the run.",
+    )
+    parser.set_defaults(lra_fallback=True)
     parser.add_argument(
-        "--pibt-regret-scope",
-        choices=("all", "pickup", "exit_pickup", "outside_zone", "pickup_outside_zone"),
-        default="all",
+        "--commitment-repair", action="store_true",
+        help="Exploratory only: repair conflicts introduced by post-solve workstation commitments.",
     )
     parser.add_argument("--pibt-random-tiebreak", dest="pibt_random_tiebreak", action="store_true")
     parser.add_argument("--no-pibt-random-tiebreak", dest="pibt_random_tiebreak", action="store_false")
-    parser.add_argument(
-        "--pibt-hindrance-scope",
-        choices=(
-            "all", "inherited", "dense", "inherited_dense", "station", "inherited_station",
-            "outside_zone", "inherited_outside_zone", "pickup", "inherited_pickup",
-        ),
-        default="inherited",
-    )
-    parser.add_argument("--pibt-front-priority", dest="no_pibt_front_priority", action="store_false")
-    parser.add_argument("--no-pibt-front-priority", dest="no_pibt_front_priority", action="store_true")
-    parser.add_argument("--pibt-phase-priority", dest="no_pibt_phase_priority", action="store_false")
-    parser.add_argument("--no-pibt-phase-priority", dest="no_pibt_phase_priority", action="store_true")
-    parser.set_defaults(
-        pibt_hindrance=True,
-        no_pibt_front_priority=False,
-        no_pibt_phase_priority=True,
-        pibt_random_tiebreak=True,
-    )
+    parser.set_defaults(pibt_random_tiebreak=True)
     parser.add_argument("--cutoff-time", type=int, default=60)
     parser.add_argument("--process-timeout", type=int, default=1800)
     parser.add_argument("--jobs", type=int, default=6)
@@ -226,9 +260,25 @@ def main() -> int:
         help="Result map label used for the sortation-medium benchmark.",
     )
     parser.add_argument(
+        "--lorr-sortation-large-counts",
+        default="",
+        help="Agent counts for the adapted LoRR sortation-large scaling benchmark.",
+    )
+    parser.add_argument(
+        "--lorr-sortation-large-benchmark",
+        type=Path,
+        default=repo_root / "benchmarks" / "lorr" / "sortation_large_p05.json",
+        help="Benchmark sidecar used for --lorr-sortation-large-counts.",
+    )
+    parser.add_argument(
+        "--lorr-sortation-large-name",
+        default="lorr_sortation_large",
+        help="Result map label used for the sortation-large benchmark.",
+    )
+    parser.add_argument(
         "--methods",
         type=parse_methods,
-        default=list(METHODS.keys()),
+        default=list(PUBLICATION_METHODS),
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
@@ -244,6 +294,7 @@ def main() -> int:
     if not binary.exists():
         raise SystemExit(f"Missing binary: {binary}")
     binary_sha256 = sha256_file(binary)
+    source_provenance = git_provenance(repo_root)
 
     seeds = args.seed_list if args.seed_list is not None else list(range(args.seed_start, args.seed_start + args.seed_count))
     grids = {
@@ -274,6 +325,12 @@ def main() -> int:
             "benchmark": args.lorr_sortation_medium_benchmark,
             "counts": lorr_sortation_medium_counts,
         }
+    lorr_sortation_large_counts = parse_counts(args.lorr_sortation_large_counts)
+    if lorr_sortation_large_counts:
+        grids[args.lorr_sortation_large_name] = {
+            "benchmark": args.lorr_sortation_large_benchmark,
+            "counts": lorr_sortation_large_counts,
+        }
     grids = {name: config for name, config in grids.items() if config["counts"]}
     for config in grids.values():
         config["benchmark_fingerprints"] = benchmark_fingerprints(config["benchmark"])
@@ -289,26 +346,16 @@ def main() -> int:
         {
             "methods": args.methods,
             "seeds": seeds,
+            "pickup_layout_seed": args.pickup_layout_seed,
             "simulation_time": args.simulation_time,
             "planning_window": args.planning_window,
             "simulation_window": args.simulation_window,
             "service_time": args.service_time,
-            "pressure_threshold": args.pressure_threshold,
-            "pibt_pressure_entry_penalty": args.pibt_pressure_entry_penalty,
-            "pibt_pressure_inbound_limit": args.pibt_pressure_inbound_limit,
-            "pibt_pressure_profile": args.pibt_pressure_profile,
-            "pibt_wait_penalty": args.pibt_wait_penalty,
-            "pibt_exit_bonus": args.pibt_exit_bonus,
-            "pibt_front_bonus": args.pibt_front_bonus,
-            "pibt_soft_collision_penalty": args.pibt_soft_collision_penalty,
-            "pibt_hindrance": args.pibt_hindrance,
-            "pibt_hindrance_scope": args.pibt_hindrance_scope,
-            "pibt_regret_iterations": args.pibt_regret_iterations,
-            "pibt_regret_weight": args.pibt_regret_weight,
-            "pibt_regret_scope": args.pibt_regret_scope,
+            **PRESSURE_DEFINITION,
+            "lra_fallback_enabled": args.lra_fallback,
+            "native_failures_only": not args.lra_fallback,
+            "commitment_repair": args.commitment_repair,
             "pibt_random_tiebreak": args.pibt_random_tiebreak,
-            "pibt_front_priority": not args.no_pibt_front_priority,
-            "pibt_phase_priority": not args.no_pibt_phase_priority,
             "continue_on_traffic_jam": args.continue_on_traffic_jam,
             "cutoff_time": args.cutoff_time,
             "process_timeout": args.process_timeout,
@@ -319,6 +366,7 @@ def main() -> int:
             "logical_cpu_count": os.cpu_count(),
             "binary": str(binary.resolve()),
             "binary_sha256": binary_sha256,
+            **source_provenance,
             "benchmark_fingerprints": {
                 name: config["benchmark_fingerprints"] for name, config in grids.items()
             },
@@ -341,19 +389,25 @@ def main() -> int:
         method_config = METHODS[method_name]
         run_signature = {
             "binary_sha256": binary_sha256,
+            **source_provenance,
             "benchmark_fingerprints": grids[map_name]["benchmark_fingerprints"],
             "map": map_name,
             "agent_count": agent_count,
             "method": method_name,
             "seed": seed,
+            "pickup_layout_seed": args.pickup_layout_seed,
             "solver": method_config["solver"],
+            "heuristic_backend": "exact_uint16_mmap" if method_config["solver"] in {"PIBT", "PIBT2"} and "movingai_map" in json.loads(benchmark.read_text()) else "exact_in_memory",
             "station_policy": method_config.get("station_policy", "vanilla"),
             "pibt_policy": method_config.get("pibt_policy", ""),
             "simulation_time": args.simulation_time,
             "planning_window": args.planning_window,
             "simulation_window": args.simulation_window,
             "service_time": args.service_time,
-            "pressure_threshold": args.pressure_threshold,
+            **PRESSURE_DEFINITION,
+            "lra_fallback_enabled": args.lra_fallback,
+            "native_failures_only": not args.lra_fallback,
+            "commitment_repair": args.commitment_repair,
             "cutoff_time": args.cutoff_time,
             "process_timeout": args.process_timeout,
             "continue_on_traffic_jam": args.continue_on_traffic_jam,
@@ -361,31 +415,13 @@ def main() -> int:
         if "pibt_policy" in method_config:
             run_signature.update(
                 {
-                    "pibt_pressure_entry_penalty": args.pibt_pressure_entry_penalty,
-                    "pibt_pressure_inbound_limit": args.pibt_pressure_inbound_limit,
-                    "pibt_pressure_profile": args.pibt_pressure_profile,
-                    "pibt_wait_penalty": args.pibt_wait_penalty,
-                    "pibt_exit_bonus": args.pibt_exit_bonus,
-                    "pibt_front_bonus": args.pibt_front_bonus,
-                    "pibt_soft_collision_penalty": args.pibt_soft_collision_penalty,
-                    "pibt_hindrance": args.pibt_hindrance,
-                    "pibt_hindrance_scope": args.pibt_hindrance_scope,
-                    "pibt_regret_iterations": args.pibt_regret_iterations,
-                    "pibt_regret_weight": args.pibt_regret_weight,
-                    "pibt_regret_scope": args.pibt_regret_scope,
                     "pibt_random_tiebreak": args.pibt_random_tiebreak,
-                    "pibt_front_priority": not args.no_pibt_front_priority,
-                    "pibt_phase_priority": not args.no_pibt_phase_priority,
+                    "pibt_candidate_randomness": PIBT_RANDOMNESS,
                 }
             )
 
         existing = load_status(status_path)
-        if (
-            existing
-            and not args.force
-            and existing.get("status") in {"clean", "failed"}
-            and signatures_match(existing.get("run_signature"), run_signature)
-        ):
+        if not args.force and status_is_reusable(existing, run_signature):
             if existing.get("status") == "clean" and not args.keep_paths:
                 (cell_dir / "paths.txt").unlink(missing_ok=True)
             log(f"[reuse] {map_name} {agent_count} {method_name} seed {seed}")
@@ -401,6 +437,7 @@ def main() -> int:
             "station_policy": method_config.get("station_policy", ""),
             "pibt_policy": method_config.get("pibt_policy", ""),
             "seed": seed,
+            "pickup_layout_seed": args.pickup_layout_seed,
             "run_signature": run_signature,
             "output_dir": str(cell_dir),
         }
@@ -428,28 +465,13 @@ def main() -> int:
             "--seed", str(seed),
             "--screen", str(args.screen),
             "--stop_at_traffic_jam", "false" if args.continue_on_traffic_jam else "true",
+            "--native_failures_only", str(not args.lra_fallback).lower(),
+            "--commitment_repair", str(args.commitment_repair).lower(),
             "--output", str(cell_dir),
         ]
         if "pibt_policy" in method_config:
             cmd.extend(["--pibt_policy", method_config["pibt_policy"]])
-            cmd.extend(["--pibt_pressure_inbound_limit", str(args.pibt_pressure_inbound_limit)])
-            cmd.extend(["--pibt_pressure_profile", args.pibt_pressure_profile])
-            cmd.extend(["--pibt_wait_penalty", str(args.pibt_wait_penalty)])
-            cmd.extend(["--pibt_exit_bonus", str(args.pibt_exit_bonus)])
-            cmd.extend(["--pibt_front_bonus", str(args.pibt_front_bonus)])
-            cmd.extend(["--pibt_soft_collision_penalty", str(args.pibt_soft_collision_penalty)])
-            cmd.extend(["--pibt_hindrance", str(args.pibt_hindrance).lower()])
-            cmd.extend(["--pibt_hindrance_scope", args.pibt_hindrance_scope])
-            cmd.extend(["--pibt_regret_iterations", str(args.pibt_regret_iterations)])
-            cmd.extend(["--pibt_regret_weight", str(args.pibt_regret_weight)])
-            cmd.extend(["--pibt_regret_scope", args.pibt_regret_scope])
             cmd.extend(["--pibt_random_tiebreak", str(args.pibt_random_tiebreak).lower()])
-            cmd.extend(["--pibt_front_priority", str(not args.no_pibt_front_priority).lower()])
-            cmd.extend(["--pibt_phase_priority", str(not args.no_pibt_phase_priority).lower()])
-            cmd.extend(["--pibt_pressure_entry_penalty", str(args.pibt_pressure_entry_penalty)])
-        if args.pressure_threshold is not None:
-            cmd.extend(["--pressure_threshold", str(args.pressure_threshold)])
-
         log(f"[run] {map_name} {agent_count} {method_name} seed {seed}")
         timed_out = False
         return_code = 0

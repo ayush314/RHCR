@@ -126,33 +126,49 @@ Path SIPP::run(const BasicGraph& G, const State& start,
 			return path;
 		}
 
+        // Consecutive co-located goals encode workstation service dwell. This
+        // successor is generated only for that workstation-specific construct;
+        // ordinary public RHCR goal sequences retain the upstream SIPP behavior.
+        const bool mandatory_colocated_hold =
+            goal_location[curr->goal_id].first == curr->state.location;
+        if (mandatory_colocated_hold &&
+            curr->state.timestep + 1 < std::get<1>(curr->interval))
+        {
+            double wait_h = compute_h_value(
+                G, curr->state.location, curr->goal_id, goal_location);
+            generate_node(curr->interval, curr, G, rt, curr->state.location,
+                          curr->state.timestep + 1, curr->state.orientation, wait_h);
+        }
 
         // expand the nodes
-        for (int orientation = 0; orientation < 4; orientation++) // move
+        if (!mandatory_colocated_hold)
         {
-            if (!G.valid_move(curr->state.location, orientation)) // the edge is blocked
-                continue;
-            int degree;
-            if (curr->state.orientation < 0)
-                degree = 0;
-            else
-                degree = G.get_rotate_degree(curr->state.orientation, orientation);
-            if (degree > std::get<1>(curr->interval) - curr->state.timestep) // don't have enough time to turn
-                continue;
-            int location = curr->state.location + G.move[orientation];
-            double h_val = compute_h_value(G, location, curr->goal_id, goal_location);
-            if (h_val > INT_MAX)   // This vertex cannot reach the goal vertex
-                continue;
-            int min_timestep = curr->state.timestep + degree + 1;
-            for (auto interval : rt.getSafeIntervals(curr->state.location, location, min_timestep, std::get<1>(curr->interval) + 1))
+            for (int orientation = 0; orientation < 4; orientation++) // move
             {
+                if (!G.valid_move(curr->state.location, orientation)) // the edge is blocked
+                    continue;
+                int degree;
                 if (curr->state.orientation < 0)
-                    generate_node(interval, curr, G, location, min_timestep, -1, h_val);
+                    degree = 0;
                 else
-                    generate_node(interval, curr, G, location, min_timestep, orientation, h_val);
-            }
+                    degree = G.get_rotate_degree(curr->state.orientation, orientation);
+                if (degree > std::get<1>(curr->interval) - curr->state.timestep) // don't have enough time to turn
+                    continue;
+                int location = curr->state.location + G.move[orientation];
+                double h_val = compute_h_value(G, location, curr->goal_id, goal_location);
+                if (h_val > INT_MAX)   // This vertex cannot reach the goal vertex
+                    continue;
+                int min_timestep = curr->state.timestep + degree + 1;
+                for (auto interval : rt.getSafeIntervals(curr->state.location, location, min_timestep, std::get<1>(curr->interval) + 1))
+                {
+                    if (curr->state.orientation < 0)
+                        generate_node(interval, curr, G, rt, location, min_timestep, -1, h_val);
+                    else
+                        generate_node(interval, curr, G, rt, location, min_timestep, orientation, h_val);
+                }
 
-        }  // end for loop that generates successors
+            }  // end for loop that generates successors
+        }
 
         if(rt.use_cat) // wait to the successive interval
         {
@@ -165,15 +181,15 @@ Path SIPP::run(const BasicGraph& G, const State& start,
             {
 				if (curr->state.orientation < 0)
 				{
-					generate_node(interval, curr, G, location, min_timestep, -1, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, -1, curr->h_val);
 				}
 				else
 				{
-					generate_node(interval, curr, G, location, min_timestep, orientation, curr->h_val);
-					generate_node(interval, curr, G, location, min_timestep, (orientation + 1) % 4, curr->h_val);
-					generate_node(interval, curr, G, location, min_timestep, (orientation + 3) % 4, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, orientation, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, (orientation + 1) % 4, curr->h_val);
+					generate_node(interval, curr, G, rt, location, min_timestep, (orientation + 3) % 4, curr->h_val);
 					if (std::get<1>(curr->interval) - curr->state.timestep > 1)
-						generate_node(interval, curr, G, location, min_timestep, (orientation + 2) % 4, curr->h_val);
+						generate_node(interval, curr, G, rt, location, min_timestep, (orientation + 2) % 4, curr->h_val);
 				}
             }
         }
@@ -343,14 +359,34 @@ Path SIPP::run(const BasicGraph& G, const State& start,
 
 
 void SIPP::generate_node(const Interval& interval, SIPPNode* curr, const BasicGraph& G,
-        int location, int min_timestep, int orientation, double h_val)
+        ReservationTable& rt, int location, int min_timestep, int orientation, double h_val)
 {
     int timestep  = max(std::get<0>(interval), min_timestep);
     int wait_time = timestep - curr->state.timestep - 1; // inlcude rotate time
+    int soft_cost = rt.getSoftVertexCost(location, timestep);
+    for (int wait_t = curr->state.timestep + 1; wait_t < timestep; wait_t++)
+        soft_cost += rt.getSoftVertexCost(curr->state.location, wait_t);
+    int transition_cost = 0;
+    State transition_current = curr->state;
+    for (int step_t = curr->state.timestep + 1; step_t <= timestep; step_t++)
+    {
+        State transition_next = transition_current;
+        transition_next.timestep = step_t;
+        if (step_t == timestep)
+        {
+            transition_next.location = location;
+            transition_next.orientation = orientation;
+        }
+        transition_cost += get_transition_cost(
+            transition_current, transition_next, curr->goal_id);
+        transition_current = transition_next;
+    }
     double g_val = curr->g_val + wait_time * G.get_weight(curr->state.location, curr->state.location)
-                   + G.get_weight(curr->state.location, location);
+                   + G.get_weight(curr->state.location, location) + soft_cost +
+                   transition_cost;
 
-    int conflicts = std::get<2>(interval) + curr->conflicts;
+    int conflicts = std::get<2>(interval) - rt.getSoftVertexCost(location, timestep) +
+        curr->conflicts;
 
     // generate (maybe temporary) node
     auto next = new SIPPNode(State(location, timestep, orientation),
@@ -452,7 +488,3 @@ inline void SIPP::releaseClosedListNodes()
         delete (*it);
     allNodes_table.clear();
 }
-
-
-
-

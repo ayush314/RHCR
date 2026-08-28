@@ -5,17 +5,24 @@ import argparse
 import csv
 import json
 import math
+import random
 from collections import defaultdict
 from pathlib import Path
 
 
 METHOD_ORDER = [
     "pbs_vanilla",
-    "pbs_distance_age",
+    "pbs_departure_aware",
     "pbs_pressure_aware",
     "pibt_vanilla",
-    "pibt_distance_age",
-    "pibt_pressure",
+    "pibt_departure_aware",
+    "pibt_pressure_aware",
+    "pibt2_vanilla",
+    "pibt2_departure_aware",
+    "pibt2_pressure_aware",
+    "pibt_legacy_vanilla",
+    "pibt_legacy_departure_aware",
+    "pibt_legacy_pressure_aware",
 ]
 MAP_ORDER = [
     "alley",
@@ -23,33 +30,51 @@ MAP_ORDER = [
     "lorr_warehouse_small",
     "lorr_sortation_small",
     "lorr_sortation_medium",
+    "lorr_sortation_large",
 ]
 METRICS = [
     "service_rate",
+    "observed_service_rate",
     "queue_wait_p95",
     "queue_wait_km_p95",
+    "queue_wait_rmst100",
+    "queue_wait_survival_20",
+    "queue_wait_survival_50",
+    "queue_wait_survival_100",
+    "mean_queue_region_occupancy_per_station",
     "active_queue_agents",
     "mean_plan_ms",
     "plan_runtime_p95_ms",
     "plan_runtime_max_ms",
+    "mean_amortized_ms_per_step",
+    "p95_amortized_ms_per_step",
+    "max_amortized_ms_per_step",
     "plan_runtime_slope_ms_per_1000_steps",
     "termination_timestep",
+    "clean_completion",
+    "time_to_stall",
+    "stall_event",
+    "distance_per_completed_service",
+    "peak_rss_kb",
     "terminated_by_traffic_jam",
     "terminated_by_commit_repair_failure",
     "terminated_by_solver_failure",
+    "terminated_by_fallback_failure",
     "pressure_active_fraction",
     "pressured_station_fraction",
-    "mean_zone_occupancy_fraction",
+    "mean_queue_region_occupancy_fraction",
     "traffic_jam_fraction",
+    "lra_fallback_episodes",
+    "lra_fallback_wait_commands",
     "pibt_inheritance_calls",
     "pibt_backtracks",
     "pibt_wait_fallbacks",
     "pibt_wait_fallback_rate_per_1000_agent_steps",
     "pibt_pressure_rank_changes",
-    "pibt_regret_updates",
 ]
 PAIRED_METRICS = [
     "service_rate",
+    "queue_wait_rmst100",
     "queue_wait_km_p95",
     "mean_plan_ms",
     "plan_runtime_p95_ms",
@@ -58,7 +83,12 @@ PAIRED_METRICS = [
     "pibt_wait_fallback_rate_per_1000_agent_steps",
 ]
 PAIRED_COMPARISONS = {
-    "pibt_pressure": ["pibt_vanilla", "pibt_distance_age"],
+    "pbs_departure_aware": ["pbs_vanilla"],
+    "pbs_pressure_aware": ["pbs_departure_aware", "pbs_vanilla"],
+    "pibt_departure_aware": ["pibt_vanilla"],
+    "pibt_pressure_aware": ["pibt_departure_aware", "pibt_vanilla"],
+    "pibt2_departure_aware": ["pibt2_vanilla"],
+    "pibt2_pressure_aware": ["pibt2_departure_aware", "pibt2_vanilla"],
 }
 T_CRITICAL_95 = [
     0.0,
@@ -67,6 +97,77 @@ T_CRITICAL_95 = [
     2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045,
     2.042,
 ]
+
+HIERARCHICAL_METRICS = [
+    "clean_completion", "time_to_stall", "service_rate", "queue_wait_rmst100",
+    "queue_wait_survival_50", "mean_queue_region_occupancy_per_station",
+    "mean_plan_ms", "peak_rss_kb",
+]
+
+
+def hierarchical_effect_rows(
+    rows: list[dict[str, str | int | float]], iterations: int = 2000,
+) -> list[dict[str, str | int | float]]:
+    rng = random.Random(314159)
+    by_cell: dict[tuple[str, int, str], dict[tuple[int, int], dict]] = defaultdict(dict)
+    for row in rows:
+        key = (str(row["map"]), int(row["agent_count"]), str(row["method"]))
+        pair_key = (int(row.get("pickup_layout_seed", 1)), int(row["seed"]))
+        by_cell[key][pair_key] = row
+
+    output = []
+    for reference, baselines in PAIRED_COMPARISONS.items():
+        conditions = {(key[0], key[1]) for key in by_cell if key[2] == reference}
+        for map_name, agent_count in sorted(conditions, key=lambda item: (map_sort_key(item[0]), item[1])):
+            reference_rows = by_cell.get((map_name, agent_count, reference), {})
+            for baseline in baselines:
+                baseline_rows = by_cell.get((map_name, agent_count, baseline), {})
+                paired_keys = sorted(set(reference_rows) & set(baseline_rows))
+                layouts = sorted({key[0] for key in paired_keys})
+                if not layouts:
+                    continue
+                keys_by_layout = {
+                    layout: [key for key in paired_keys if key[0] == layout]
+                    for layout in layouts
+                }
+                for metric in HIERARCHICAL_METRICS:
+                    valid = [
+                        key for key in paired_keys
+                        if reference_rows[key].get(metric, "") != ""
+                        and baseline_rows[key].get(metric, "") != ""
+                    ]
+                    if not valid:
+                        continue
+                    differences = [
+                        float(reference_rows[key][metric]) - float(baseline_rows[key][metric])
+                        for key in valid
+                    ]
+                    bootstrap = []
+                    for _ in range(iterations):
+                        sampled = []
+                        for layout in rng.choices(layouts, k=len(layouts)):
+                            candidates = [key for key in keys_by_layout[layout] if key in valid]
+                            if candidates:
+                                sampled.extend(rng.choices(candidates, k=len(candidates)))
+                        if sampled:
+                            bootstrap.append(mean([
+                                float(reference_rows[key][metric]) -
+                                float(baseline_rows[key][metric]) for key in sampled
+                            ]))
+                    bootstrap.sort()
+                    output.append({
+                        "map": map_name,
+                        "agent_count": agent_count,
+                        "reference": reference,
+                        "baseline": baseline,
+                        "metric": metric,
+                        "layout_seed_count": len(layouts),
+                        "paired_run_count": len(valid),
+                        "mean_difference": mean(differences),
+                        "bootstrap_ci95_low": percentile(bootstrap, 2.5),
+                        "bootstrap_ci95_high": percentile(bootstrap, 97.5),
+                    })
+    return output
 
 
 def method_sort_key(name: str) -> tuple[int, str]:
@@ -107,6 +208,42 @@ def percentile(values: list[float], pct: float) -> float:
         return ordered[lower]
     fraction = rank - lower
     return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def kaplan_meier_curve(
+    entries: list[dict[str, str | int | float]],
+    time_key: str = "time_to_stall",
+    event_key: str = "stall_event",
+) -> list[dict[str, float | int]]:
+    observations = sorted(
+        (float(row[time_key]), int(float(row[event_key])))
+        for row in entries
+        if row.get(time_key, "") != "" and row.get(event_key, "") != ""
+    )
+    if not observations:
+        return []
+    survival = 1.0
+    output: list[dict[str, float | int]] = [{
+        "timestep": 0.0,
+        "at_risk": len(observations),
+        "events": 0,
+        "censored": 0,
+        "survival_probability": survival,
+    }]
+    for timestep in sorted({time for time, _ in observations}):
+        at_risk = sum(time >= timestep for time, _ in observations)
+        events = sum(time == timestep and event == 1 for time, event in observations)
+        censored = sum(time == timestep and event == 0 for time, event in observations)
+        if events:
+            survival *= 1.0 - events / at_risk
+        output.append({
+            "timestep": timestep,
+            "at_risk": at_risk,
+            "events": events,
+            "censored": censored,
+            "survival_probability": survival,
+        })
+    return output
 
 
 def metric_values(entries: list[dict[str, str | int | float]], metric: str) -> list[float]:
@@ -315,12 +452,25 @@ def read_status_rows(root: Path) -> list[dict[str, str | int | float]]:
             backfill_runtime_tail(metrics, status_path.parent / "planning_runtime.csv")
         except (OSError, KeyError, ValueError):
             pass
+        signature = payload.get("run_signature", {})
+        fallback_count = metrics.get("pibt_wait_fallbacks", "")
+        termination_timestep = metrics.get("termination_timestep", "")
+        simulation_window = int(signature.get("simulation_window", 0))
+        planning_window = int(signature.get("planning_window", 0))
+        if (fallback_count != "" and termination_timestep != "" and
+                simulation_window > 0 and planning_window > 0):
+            episodes = max(1, math.ceil(float(termination_timestep) / simulation_window))
+            agent_steps = episodes * int(payload["agent_count"]) * planning_window
+            metrics["pibt_wait_fallback_rate_per_1000_agent_steps"] = (
+                1000.0 * float(fallback_count) / agent_steps
+            )
         status = payload["status"]
         failure_reason = payload.get("failure_reason", "")
         termination_failures = (
             ("terminated_by_traffic_jam", "traffic_jam"),
             ("terminated_by_commit_repair_failure", "internal_repair_failure"),
             ("terminated_by_solver_failure", "solver_failure"),
+            ("terminated_by_fallback_failure", "fallback_failure"),
         )
         for metric, reason in termination_failures:
             if metrics.get(metric) == 1.0:
@@ -333,6 +483,7 @@ def read_status_rows(root: Path) -> list[dict[str, str | int | float]]:
                 "agent_count": int(payload["agent_count"]),
                 "method": payload["method"],
                 "seed": int(payload.get("seed", 0)),
+                "pickup_layout_seed": int(payload.get("pickup_layout_seed", 1)),
                 "status": status,
                 "failure_reason": failure_reason,
                 **metrics,
@@ -438,6 +589,7 @@ def main() -> int:
                     "agent_count",
                     "method",
                     "seed",
+                    "pickup_layout_seed",
                     "status",
                     "failure_reason",
                     *METRICS,
@@ -475,10 +627,9 @@ def main() -> int:
             "failure_reasons": ";".join(failure_reasons),
         }
         for metric in METRICS:
-            values = metric_values(clean_entries, metric)
             all_values = metric_values(entries, metric)
-            aggregate[metric] = "" if not values else mean(values)
-            aggregate[f"{metric}_std"] = "" if not values else stddev(values)
+            aggregate[metric] = "" if not all_values else mean(all_values)
+            aggregate[f"{metric}_std"] = "" if not all_values else stddev(all_values)
             aggregate[f"{metric}_all"] = "" if not all_values else mean(all_values)
             aggregate[f"{metric}_all_std"] = "" if not all_values else stddev(all_values)
         aggregate_rows.append(aggregate)
@@ -504,6 +655,27 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(aggregate_rows)
 
+    survival_rows = []
+    for (map_name, agent_count, method_name), entries in sorted(
+        grouped.items(),
+        key=lambda item: (map_sort_key(item[0][0]), item[0][1], method_sort_key(item[0][2])),
+    ):
+        for point in kaplan_meier_curve(entries):
+            survival_rows.append({
+                "map": map_name,
+                "agent_count": agent_count,
+                "method": method_name,
+                **point,
+            })
+    with (root / "stall_survival.csv").open("w", newline="") as fh:
+        fieldnames = [
+            "map", "agent_count", "method", "timestep", "at_risk",
+            "events", "censored", "survival_probability",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(survival_rows)
+
     paired_rows = paired_comparison_rows(combined_rows)
     with (root / "paired_comparison.csv").open("w", newline="") as fh:
         fieldnames = [
@@ -522,6 +694,17 @@ def main() -> int:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(paired_rows)
+
+    hierarchical_rows = hierarchical_effect_rows(combined_rows)
+    with (root / "hierarchical_effects.csv").open("w", newline="") as fh:
+        fieldnames = [
+            "map", "agent_count", "reference", "baseline", "metric",
+            "layout_seed_count", "paired_run_count", "mean_difference",
+            "bootstrap_ci95_low", "bootstrap_ci95_high",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(hierarchical_rows)
 
     if args.paired_baseline_root:
         baseline_root = Path(args.paired_baseline_root)

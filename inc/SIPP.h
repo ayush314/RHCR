@@ -98,9 +98,9 @@ private:
 	inline void releaseClosedListNodes();
 
     void generate_node(const Interval& interval, SIPPNode* curr, const BasicGraph& G,
-                       int location, int min_timestep, int orientation, double h_val);
+                       ReservationTable& rt, int location, int min_timestep,
+                       int orientation, double h_val);
     // Updates the path
     Path updatePath(const BasicGraph& G, const SIPPNode* goal);
 
 };
-

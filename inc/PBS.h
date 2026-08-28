@@ -2,6 +2,7 @@
 #include "PBSNode.h"
 #include "MAPFSolver.h"
 #include "WorkstationCommon.h"
+#include "WorkstationPolicy.h"
 #include <ctime>
 
 // TODO: add topological sorting
@@ -13,8 +14,8 @@ public:
     bool lazyPriority;
     bool prioritize_start = true;
     string station_policy = "vanilla";
-    int workstation_pressure_threshold = -1;
     vector<WorkstationAgentContext> workstation_context;
+    vector<vector<WorkstationAgentContext>> projected_goal_context;
 
 	 // runtime breakdown
     double runtime_rt = 0;
@@ -53,8 +54,8 @@ public:
 
     string get_name() const {return "PBS"; }
     void set_workstation_policy(const string& policy) { station_policy = policy; }
-    void set_workstation_pressure_threshold(int threshold) { workstation_pressure_threshold = threshold; }
     void set_workstation_context(const vector<WorkstationAgentContext>& context) { workstation_context = context; }
+    void set_projected_goal_context(const vector<vector<WorkstationAgentContext>>& context) { projected_goal_context = context; }
 
 	void clear();
 
@@ -77,6 +78,7 @@ private:
 
 	// double focal_w = 1.0;
     unordered_set<pair<int, int>> nogood;
+    vector<WorkstationPressureBaseSnapshot> workstation_pressure_projection;
 
     // SingleAgentICBS astar;
 
@@ -130,10 +132,11 @@ private:
     void find_replan_agents(PBSNode* node, const list<Conflict>& conflicts,
             unordered_set<int>& replan);
     bool prefer_workstation_branch(const Conflict& conflict, pair<int, int>& preferred_priority) const;
-    tuple<int, int, int> distance_age_key(int agent) const;
-    tuple<int, int, int, int> pressure_aware_front_runner_key(int agent) const;
-    int workstation_front_runner(int station_id) const;
-    int effective_workstation_pressure_threshold() const;
-    bool workstation_pressure_active(int pressure) const;
-    bool maybe_add_workstation_softzone(ReservationTable& rt, int agent);
+    WorkstationAgentContext projected_context_at(int agent, int local_t) const;
+    WorkstationAgentContext projected_context_for_goal(
+        int agent, int goal_id) const;
+    void prepare_workstation_pressure_projection(int agent);
+    int workstation_transition_cost(
+        int agent, const State& current, const State& next, int goal_id) const;
+    Path run_low_level_path(int agent, ReservationTable& reservations);
 };

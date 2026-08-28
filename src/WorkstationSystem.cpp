@@ -2,6 +2,7 @@
 
 #include "PBS.h"
 #include "PIBT.h"
+#include "PIBT2.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,11 +10,10 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include <sys/resource.h>
 
 namespace
 {
-constexpr int kDefaultPressureThreshold = 2;
-
 double percentile(std::vector<int> values, double pct)
 {
     if (values.empty())
@@ -42,12 +42,6 @@ double percentile(std::vector<double> values, double pct)
     return values[lo] * (1.0 - frac) + values[hi] * frac;
 }
 
-int effective_pressure_threshold(int override_threshold)
-{
-    if (override_threshold > 0)
-        return override_threshold;
-    return kDefaultPressureThreshold;
-}
 } // namespace
 
 WorkstationSystem::WorkstationSystem(const WorkstationGrid& G, MAPFSolver& solver) :
@@ -64,12 +58,16 @@ void WorkstationSystem::initialize()
     paths.resize(num_of_drives);
     finished_tasks.resize(num_of_drives);
     workstation_agents.resize(num_of_drives);
+    projected_goal_context.resize(num_of_drives);
     queue_wait_samples.clear();
     mean_plan_ms_samples.clear();
     plan_timestep_samples.clear();
     pressure_active_samples.clear();
     pressured_station_fraction_samples.clear();
-    zone_occupancy_fraction_samples.clear();
+    queue_region_occupancy_fraction_samples.clear();
+    queue_region_occupancy_samples.clear();
+    pibt_executed_priority_age.assign(num_of_drives, 0);
+    distance_traveled = 0;
     completed_services = 0;
     planning_episodes = 0;
     pressure_active_episodes = 0;
@@ -78,12 +76,15 @@ void WorkstationSystem::initialize()
     pibt_backtracks_total = 0;
     pibt_wait_fallbacks_total = 0;
     pibt_pressure_rank_changes_total = 0;
-    pibt_regret_updates_total = 0;
+    lra_fallback_episodes = 0;
+    lra_fallback_wait_commands = 0;
+    last_episode_used_lra_fallback = false;
     termination_reason = "not_started";
     termination_timestep = -1;
     terminated_by_traffic_jam = false;
     terminated_by_commit_repair_failure = false;
     terminated_by_solver_failure = false;
+    terminated_by_fallback_failure = false;
     initialize_start_locations();
     initialize_tasks();
 }
@@ -173,57 +174,67 @@ int WorkstationSystem::station_pressure(int station_id) const
         return 0;
 
     const auto& station = G.stations[station_id];
-    int pressure = 0;
-    for (int agent_id = 0; agent_id < num_of_drives; agent_id++)
-    {
-        int loc = starts[agent_id].location;
-        if (loc != station.workstation && station.zone_cells.find(loc) != station.zone_cells.end())
-            pressure++;
-    }
-    return pressure;
+    return count_workstation_pressure(num_of_drives, [&](int agent_id) {
+        return station.zone_cells.find(starts[agent_id].location) != station.zone_cells.end();
+    });
 }
 
 void WorkstationSystem::build_goal_sequence(int agent_id)
 {
     goal_locations[agent_id].clear();
+    projected_goal_context[agent_id].clear();
     auto& agent = workstation_agents[agent_id];
     ensure_lookahead_tasks(agent, 2);
-    auto append_goal = [&](int loc) {
+    auto append_goal = [&](int loc, WorkstationAgentPhase phase, int station_id,
+                           const WorkstationTask& task) {
         goal_locations[agent_id].emplace_back(loc, 0);
+        WorkstationAgentContext context;
+        context.station_id = station_id;
+        context.current_t = timestep;
+        context.boundary_entry_t = task.boundary_t;
+        context.task_issue_t = task.issue_t;
+        context.phase = phase;
+        projected_goal_context[agent_id].push_back(context);
     };
-    auto append_service_wait = [&](int station_id, int remaining_dwell) {
+    auto append_service_dwell = [&](int station_id, int dwell_steps,
+                                    WorkstationAgentPhase arrival_phase,
+                                    const WorkstationTask& task) {
         int workstation = G.stations[station_id].workstation;
-        for (int i = 0; i <= remaining_dwell; i++)
-        {
-            goal_locations[agent_id].emplace_back(workstation, i);
-        }
+        append_goal(workstation, arrival_phase, station_id, task);
+        for (int step = 0; step < dwell_steps; step++)
+            append_goal(workstation, WorkstationAgentPhase::SERVICE,
+                        station_id, task);
     };
 
     const WorkstationTask& current = agent.tasks.front();
     const WorkstationTask& next = agent.tasks[1];
+    int planned_exit = agent.phase == WorkstationRuntimePhase::TO_EXIT ?
+        agent.exit_target :
+        G.choose_exit_for_endpoint(current.station_id, next.endpoint_target);
 
     if (agent.phase == WorkstationRuntimePhase::TO_PICKUP)
     {
-        append_goal(current.endpoint_target);
-        append_service_wait(current.station_id, workstation_service_time);
-        return;
+        append_goal(current.endpoint_target, WorkstationAgentPhase::TO_PICKUP,
+                    current.station_id, current);
+        append_service_dwell(current.station_id, workstation_service_time,
+                             WorkstationAgentPhase::TO_STATION, current);
     }
-
-    if (agent.phase == WorkstationRuntimePhase::TO_STATION)
+    else if (agent.phase == WorkstationRuntimePhase::TO_STATION)
     {
-        append_service_wait(current.station_id, workstation_service_time);
-        return;
+        append_service_dwell(current.station_id, workstation_service_time,
+                             WorkstationAgentPhase::TO_STATION, current);
     }
-
-    if (agent.phase == WorkstationRuntimePhase::SERVICE)
+    else if (agent.phase == WorkstationRuntimePhase::SERVICE)
     {
         int remaining_dwell = std::max(agent.service_complete_t - timestep, 0);
-        append_service_wait(current.station_id, remaining_dwell);
-        return;
+        append_service_dwell(current.station_id, remaining_dwell,
+                             WorkstationAgentPhase::SERVICE, current);
     }
 
-    append_goal(agent.exit_target);
-    append_goal(next.endpoint_target);
+    append_goal(planned_exit, WorkstationAgentPhase::TO_EXIT,
+                current.station_id, current);
+    append_goal(next.endpoint_target, WorkstationAgentPhase::TO_PICKUP,
+                next.station_id, next);
 }
 
 void WorkstationSystem::update_goal_locations()
@@ -238,6 +249,7 @@ void WorkstationSystem::sync_solver_context()
 {
     PBS* pbs = dynamic_cast<PBS*>(&solver);
     PIBT* pibt = dynamic_cast<PIBT*>(&solver);
+    PIBT2* pibt2 = dynamic_cast<PIBT2*>(&solver);
     std::vector<WorkstationAgentContext> context(num_of_drives);
     for (int k = 0; k < num_of_drives; k++)
     {
@@ -274,35 +286,64 @@ void WorkstationSystem::sync_solver_context()
     if (pbs != nullptr)
     {
         pbs->set_workstation_policy(station_policy);
-        pbs->set_workstation_pressure_threshold(workstation_pressure_threshold);
         pbs->set_workstation_context(context);
+        pbs->set_projected_goal_context(projected_goal_context);
     }
 
     if (pibt != nullptr)
     {
         pibt->set_pibt_policy(pibt_policy);
         pibt->tie_seed = (uint64_t)seed;
-        pibt->set_workstation_pressure_threshold(workstation_pressure_threshold);
         pibt->set_workstation_context(context);
+        pibt->set_projected_goal_context(projected_goal_context);
+        pibt->set_executed_priority_age(pibt_executed_priority_age);
+    }
+
+    if (pibt2 != nullptr)
+    {
+        pibt2->set_pibt_policy(pibt_policy);
+        pibt2->tie_seed = (uint64_t)seed;
+        pibt2->set_episode_start_timestep(timestep);
+        pibt2->set_workstation_context(context);
+        pibt2->set_projected_goal_context(projected_goal_context);
+        pibt2->set_executed_priority_age(pibt_executed_priority_age);
     }
 }
 
 bool WorkstationSystem::solve_workstation_episode()
 {
+    last_episode_used_lra_fallback = false;
     update_initial_constraints(solver.initial_constraints);
     bool solved = solver.run(starts, goal_locations, time_limit);
     if (solved)
     {
         update_paths(solver.solution, INT_MAX);
     }
-    else if (solver.get_name() == "PBS")
+    else if (!native_failures_only)
     {
-        LRAStar lra(G, solver.path_planner);
-        lra.simulation_window = simulation_window;
-        lra.k_robust = k_robust;
-        lra.resolve_conflicts(solver.solution);
-        update_paths(lra.solution, INT_MAX);
-        solved = true;
+        bool has_valid_prefix = solver.solution.size() == (size_t)num_of_drives;
+        for (int agent = 0; has_valid_prefix && agent < num_of_drives; agent++)
+        {
+            has_valid_prefix = !solver.solution[agent].empty() &&
+                solver.solution[agent].front().location == starts[agent].location;
+        }
+        if (has_valid_prefix)
+        {
+            LRAStar lra(G, solver.path_planner);
+            lra.simulation_window = simulation_window;
+            lra.k_robust = k_robust;
+            lra.resolve_conflicts(solver.solution);
+            update_paths(lra.solution, INT_MAX);
+            lra_fallback_episodes++;
+            lra_fallback_wait_commands += lra.num_wait_commands;
+            last_episode_used_lra_fallback = true;
+            solved = true;
+        }
+        else
+        {
+            cout << "Cannot invoke LRA fallback because " << solver.get_name()
+                 << " did not return a valid path prefix" << endl;
+        }
     }
     if (log && solved)
         solver.save_constraints_in_goal_node(outfile + "/goal_nodes/" + std::to_string(timestep) + ".gv");
@@ -316,19 +357,17 @@ bool WorkstationSystem::solve_workstation_episode()
 void WorkstationSystem::record_episode_diagnostics()
 {
     planning_episodes++;
-    const int pressure_threshold = effective_pressure_threshold(workstation_pressure_threshold);
     int pressured_stations = 0;
+    int occupancy_sum = 0;
     double occupancy_fraction_sum = 0;
     for (size_t station_id = 0; station_id < G.stations.size(); station_id++)
     {
         int pressure = station_pressure((int)station_id);
-        if (pressure >= pressure_threshold)
+        occupancy_sum += pressure;
+        if (workstation_pressure_active(pressure))
             pressured_stations++;
         const auto& station = G.stations[station_id];
-        int zone_capacity = std::max(
-            1,
-            (int)station.zone_cells.size() -
-                (station.zone_cells.find(station.workstation) != station.zone_cells.end() ? 1 : 0));
+        int zone_capacity = std::max(1, (int)station.zone_cells.size());
         occupancy_fraction_sum += static_cast<double>(pressure) / zone_capacity;
     }
     bool pressure_active = pressured_stations > 0;
@@ -337,26 +376,8 @@ void WorkstationSystem::record_episode_diagnostics()
     pressure_active_samples.push_back(pressure_active ? 1 : 0);
     double station_count = std::max<size_t>(1, G.stations.size());
     pressured_station_fraction_samples.push_back(pressured_stations / station_count);
-    zone_occupancy_fraction_samples.push_back(occupancy_fraction_sum / station_count);
-}
-
-void WorkstationSystem::seed_fixed_service_paths()
-{
-    solver.initial_paths.clear();
-    solver.initial_paths.resize(num_of_drives);
-    for (int k = 0; k < num_of_drives; k++)
-    {
-        const auto& agent = workstation_agents[k];
-        if (agent.phase != WorkstationRuntimePhase::SERVICE)
-            continue;
-
-        int loc = starts[k].location;
-        solver.initial_paths[k].reserve(simulation_window + 1);
-        for (int t = 0; t <= simulation_window; t++)
-        {
-            solver.initial_paths[k].emplace_back(loc, t, starts[k].orientation);
-        }
-    }
+    queue_region_occupancy_fraction_samples.push_back(occupancy_fraction_sum / station_count);
+    queue_region_occupancy_samples.push_back(occupancy_sum / station_count);
 }
 
 void WorkstationSystem::pad_paths_through_execution_window()
@@ -728,7 +749,7 @@ bool WorkstationSystem::resolve_committed_conflicts()
         };
 
         out << "station_policy: " << station_policy << "\n";
-        out << "pressure_threshold: " << effective_pressure_threshold(workstation_pressure_threshold) << "\n";
+        out << "pressure_threshold: " << kWorkstationPressureThreshold << "\n";
         out << "timestep: " << timestep << "\n";
         out << "simulation_window: " << simulation_window << "\n";
         out << "planning_window: " << planning_window << "\n";
@@ -861,20 +882,9 @@ bool WorkstationSystem::workstation_congested() const
     if (simulation_window <= 1)
         return false;
 
-    int eligible_agents = 0;
     int wait_agents = 0;
-    for (int agent_id = 0; agent_id < num_of_drives; agent_id++)
+    for (const auto& path : paths)
     {
-        const auto& agent = workstation_agents[agent_id];
-        int remaining_service = agent.service_complete_t - timestep;
-        if (agent.phase == WorkstationRuntimePhase::SERVICE &&
-            remaining_service >= simulation_window)
-        {
-            continue;
-        }
-
-        eligible_agents++;
-        const auto& path = paths[agent_id];
         int t = 0;
         while (t < simulation_window &&
                path[timestep].location == path[timestep + t].location &&
@@ -885,7 +895,7 @@ bool WorkstationSystem::workstation_congested() const
         if (t == simulation_window)
             wait_agents++;
     }
-    return eligible_agents > 0 && wait_agents > eligible_agents / 2;
+    return wait_agents > num_of_drives / 2;
 }
 
 void WorkstationSystem::move_workstations()
@@ -906,6 +916,7 @@ void WorkstationSystem::move_workstations()
 
     for (int t = start_timestep; t <= end_timestep; t++)
     {
+        vector<bool> phase_advanced(num_of_drives, false);
         for (int k = 0; k < num_of_drives; k++)
         {
             const State& curr = paths[k][t];
@@ -945,6 +956,12 @@ void WorkstationSystem::move_workstations()
         {
             auto& agent = workstation_agents[k];
             State curr = paths[k][t];
+            if (t > start_timestep)
+            {
+                const State& prev = paths[k][t - 1];
+                if (prev.location != curr.location)
+                    distance_traveled++;
+            }
             if (agent.phase == WorkstationRuntimePhase::TO_PICKUP)
             {
                 auto& task = agent.tasks.front();
@@ -953,6 +970,7 @@ void WorkstationSystem::move_workstations()
                     agent.last_endpoint = task.endpoint_target;
                     task.issue_t = t;
                     agent.phase = WorkstationRuntimePhase::TO_STATION;
+                    phase_advanced[k] = true;
                 }
             }
 
@@ -967,6 +985,7 @@ void WorkstationSystem::move_workstations()
                     if (task.boundary_t >= 0)
                         queue_wait_samples.push_back(t - task.boundary_t);
                     agent.phase = WorkstationRuntimePhase::SERVICE;
+                    phase_advanced[k] = true;
                     agent.service_complete_t = t + workstation_service_time;
                 }
             }
@@ -974,13 +993,6 @@ void WorkstationSystem::move_workstations()
             if (agent.phase == WorkstationRuntimePhase::SERVICE)
             {
                 auto& task = agent.tasks.front();
-                if (curr.location != G.stations[task.station_id].workstation)
-                {
-                    set_termination("left_workstation_early", t);
-                    cout << "Drive " << k << " left workstation early at timestep " << t << endl;
-                    save_results();
-                    exit(-1);
-                }
                 if (t >= agent.service_complete_t)
                 {
                     completed_services++;
@@ -989,6 +1001,17 @@ void WorkstationSystem::move_workstations()
                     agent.exit_target = G.choose_exit_for_endpoint(task.station_id, agent.tasks[1].endpoint_target);
                     agent.exit_station_id = task.station_id;
                     agent.phase = WorkstationRuntimePhase::TO_EXIT;
+                    phase_advanced[k] = true;
+                }
+                else if (curr.location != G.stations[task.station_id].workstation)
+                {
+                    set_termination("left_workstation_early", t);
+                    cout << "Drive " << k << " left workstation early at timestep " << t
+                         << " (location " << curr.location << ", workstation "
+                         << G.stations[task.station_id].workstation << ", service completes "
+                         << agent.service_complete_t << ")" << endl;
+                    save_results();
+                    exit(-1);
                 }
             }
 
@@ -1003,7 +1026,15 @@ void WorkstationSystem::move_workstations()
                     agent.exit_target = -1;
                     agent.exit_station_id = -1;
                     agent.service_complete_t = -1;
+                    phase_advanced[k] = true;
                 }
+            }
+            if (t > start_timestep)
+            {
+                if (phase_advanced[k] || agent.phase == WorkstationRuntimePhase::SERVICE)
+                    pibt_executed_priority_age[k] = 0;
+                else
+                    pibt_executed_priority_age[k]++;
             }
         }
     }
@@ -1014,6 +1045,14 @@ double WorkstationSystem::compute_service_rate() const
     if (simulation_time <= 0 || G.stations.empty())
         return 0;
     return completed_services * 100.0 / (simulation_time * G.stations.size());
+}
+
+double WorkstationSystem::compute_observed_service_rate() const
+{
+    int observed = termination_timestep >= 0 ? termination_timestep : timestep;
+    if (observed <= 0 || G.stations.empty())
+        return 0;
+    return completed_services * 100.0 / (observed * G.stations.size());
 }
 
 double WorkstationSystem::compute_queue_wait_p95() const
@@ -1033,6 +1072,11 @@ int WorkstationSystem::compute_active_queue_agents() const
         }
     }
     return count;
+}
+
+int WorkstationSystem::compute_queue_observation_count() const
+{
+    return (int)queue_wait_samples.size() + compute_active_queue_agents();
 }
 
 double WorkstationSystem::compute_queue_wait_km_p95() const
@@ -1084,6 +1128,86 @@ double WorkstationSystem::compute_queue_wait_km_p95() const
     return observation_t;
 }
 
+double WorkstationSystem::compute_queue_wait_rmst(int horizon) const
+{
+    vector<pair<int, bool>> observations;
+    for (int wait : queue_wait_samples)
+        observations.emplace_back(wait, true);
+    const int observation_t = termination_timestep >= 0 ? termination_timestep : timestep;
+    for (const auto& agent : workstation_agents)
+    {
+        if (agent.phase == WorkstationRuntimePhase::TO_STATION && !agent.tasks.empty() &&
+            agent.tasks.front().boundary_t >= 0)
+        {
+            observations.emplace_back(
+                std::max(0, observation_t - agent.tasks.front().boundary_t), false);
+        }
+    }
+    if (observations.empty())
+        return 0;
+    std::sort(observations.begin(), observations.end());
+    int at_risk = observations.size();
+    int previous = 0;
+    double survival = 1.0;
+    double area = 0;
+    size_t index = 0;
+    while (index < observations.size() && previous < horizon)
+    {
+        int duration = std::min(observations[index].first, horizon);
+        area += survival * std::max(0, duration - previous);
+        previous = duration;
+        int events = 0;
+        int censored = 0;
+        int raw_duration = observations[index].first;
+        while (index < observations.size() && observations[index].first == raw_duration)
+        {
+            observations[index].second ? events++ : censored++;
+            index++;
+        }
+        if (raw_duration <= horizon && at_risk > 0)
+            survival *= 1.0 - static_cast<double>(events) / at_risk;
+        at_risk -= events + censored;
+    }
+    if (previous < horizon)
+        area += survival * (horizon - previous);
+    return area;
+}
+
+double WorkstationSystem::compute_queue_wait_survival(int threshold) const
+{
+    vector<pair<int, bool>> observations;
+    for (int wait : queue_wait_samples)
+        observations.emplace_back(wait, true);
+    const int observation_t = termination_timestep >= 0 ? termination_timestep : timestep;
+    for (const auto& agent : workstation_agents)
+    {
+        if (agent.phase == WorkstationRuntimePhase::TO_STATION && !agent.tasks.empty() &&
+            agent.tasks.front().boundary_t >= 0)
+            observations.emplace_back(std::max(0, observation_t - agent.tasks.front().boundary_t), false);
+    }
+    if (observations.empty())
+        return 0;
+    std::sort(observations.begin(), observations.end());
+    int at_risk = observations.size();
+    double survival = 1.0;
+    size_t index = 0;
+    while (index < observations.size() && observations[index].first <= threshold)
+    {
+        int duration = observations[index].first;
+        int events = 0;
+        int censored = 0;
+        while (index < observations.size() && observations[index].first == duration)
+        {
+            observations[index].second ? events++ : censored++;
+            index++;
+        }
+        if (at_risk > 0)
+            survival *= 1.0 - static_cast<double>(events) / at_risk;
+        at_risk -= events + censored;
+    }
+    return survival;
+}
+
 double WorkstationSystem::compute_mean_plan_ms() const
 {
     if (mean_plan_ms_samples.empty())
@@ -1132,6 +1256,7 @@ void WorkstationSystem::set_termination(const string& reason, int t)
     terminated_by_traffic_jam = (reason == "traffic_jam");
     terminated_by_commit_repair_failure = (reason == "commit_repair_failure");
     terminated_by_solver_failure = (reason == "solver_failure");
+    terminated_by_fallback_failure = (reason == "fallback_failure");
 }
 
 void WorkstationSystem::simulate(int simulation_time)
@@ -1147,7 +1272,7 @@ void WorkstationSystem::simulate(int simulation_time)
         update_goal_locations();
         record_episode_diagnostics();
         sync_solver_context();
-        seed_fixed_service_paths();
+        solver.initial_paths.clear();
         bool solved = solve_workstation_episode();
         mean_plan_ms_samples.push_back(solver.runtime * 1000.0);
         plan_timestep_samples.push_back(timestep);
@@ -1158,7 +1283,14 @@ void WorkstationSystem::simulate(int simulation_time)
             pibt_backtracks_total += pibt->backtracks;
             pibt_wait_fallbacks_total += pibt->wait_fallbacks;
             pibt_pressure_rank_changes_total += pibt->pressure_rank_changes;
-            pibt_regret_updates_total += pibt->regret_updates;
+        }
+        PIBT2* pibt2 = dynamic_cast<PIBT2*>(&solver);
+        if (pibt2 != nullptr)
+        {
+            pibt_inheritance_calls_total += pibt2->inheritance_calls;
+            pibt_backtracks_total += pibt2->backtracks;
+            pibt_wait_fallbacks_total += pibt2->wait_fallbacks;
+            pibt_pressure_rank_changes_total += pibt2->pressure_rank_changes;
         }
         if (!solved)
         {
@@ -1168,23 +1300,32 @@ void WorkstationSystem::simulate(int simulation_time)
             break;
         }
         pad_paths_through_execution_window();
-        validate_execution_slice("post_solve");
-        if (!resolve_committed_conflicts())
+        if (!validate_execution_slice("post_solve"))
+        {
+            set_termination(last_episode_used_lra_fallback ?
+                            "fallback_failure" : "invalid_execution", timestep);
+            break;
+        }
+        if (commitment_repair && !resolve_committed_conflicts())
         {
             set_termination("commit_repair_failure", timestep);
             cout << "Failed to repair workstation commitment conflicts at timestep " << timestep << endl;
             save_results();
             exit(-1);
         }
-        validate_execution_slice("post_commit");
-        bool traffic_jam = workstation_congested();
+        if (!validate_execution_slice("post_commit"))
+        {
+            set_termination("invalid_execution", timestep);
+            break;
+        }
         move_workstations();
+        bool traffic_jam = workstation_congested();
         if (traffic_jam)
         {
             traffic_jam_episodes++;
             if (stop_at_traffic_jam)
             {
-                set_termination("traffic_jam", timestep);
+                set_termination("traffic_jam", std::min(timestep + simulation_window, simulation_time));
                 cout << "***** Too many traffic jams ***" << endl;
                 break;
             }
@@ -1206,45 +1347,61 @@ void WorkstationSystem::save_results()
            << "#drives: " << num_of_drives << std::endl
            << "seed: " << seed << std::endl
            << "solver: " << solver.get_name() << std::endl
+           << "rhcr_upstream: Jiaoyang-Li/RHCR" << std::endl
+           << "rhcr_upstream_commit: d009a3bd716419b0d6c04aead9dbca1720c012da" << std::endl
            << "station_policy: " << station_policy << std::endl
            << "pibt_policy: " << pibt_policy << std::endl
            << "stop_at_traffic_jam: " << (stop_at_traffic_jam ? 1 : 0) << std::endl
+           << "traffic_jam_rule: rhcr_majority_wait_full_execution_window" << std::endl
            << "time_limit: " << time_limit << std::endl
            << "simulation_window: " << simulation_window << std::endl
            << "planning_window: " << planning_window << std::endl
            << "simulation_time: " << simulation_time << std::endl
            << "service_time: " << workstation_service_time << std::endl
-           << "pressure_threshold: " << effective_pressure_threshold(workstation_pressure_threshold) << std::endl;
+           << "service_dwell_encoding: exact_colocated_goal_steps" << std::endl
+           << "service_dwell_solver_handling: policy_independent" << std::endl
+           << "pressure_population: all_agents_in_queue_region" << std::endl
+           << "pressure_evaluation: projected_each_step" << std::endl
+           << "pressure_action_timing: state_t_scores_action_t_plus_1" << std::endl
+           << "pressure_task_metadata: executed_only" << std::endl
+           << "pressure_threshold: " << kWorkstationPressureThreshold << std::endl
+           << "pressure_queue_cost: " << kWorkstationPressureQueueCost << std::endl
+           << "pressure_privileged_inbound_count: " << kWorkstationPrivilegedInboundCount << std::endl
+           << "native_failures_only: " << (native_failures_only ? 1 : 0) << std::endl
+           << "lra_fallback_enabled: " << (!native_failures_only ? 1 : 0) << std::endl
+           << "lra_fallback_trigger: native_solver_failure_with_valid_prefix" << std::endl
+           << "lra_edge_swap_policy: both_wait" << std::endl
+           << "commitment_repair: " << (commitment_repair ? 1 : 0) << std::endl
+           << "lra_fallback_episodes: " << lra_fallback_episodes << std::endl
+           << "lra_fallback_wait_commands: " << lra_fallback_wait_commands << std::endl;
     if (const auto* pibt = dynamic_cast<const PIBT*>(&solver))
     {
-        output << "pibt_pressure_profile: " << pibt->pressure_profile << std::endl
-               << "pibt_pressure_entry_penalty: " << pibt->pressure_entry_penalty << std::endl
-               << "pibt_pressure_inbound_limit: " << pibt->pressure_inbound_limit << std::endl
-               << "pibt_wait_penalty: " << pibt->wait_penalty << std::endl
-               << "pibt_exit_bonus: " << pibt->exit_bonus << std::endl
-               << "pibt_front_bonus: " << pibt->front_bonus << std::endl
-               << "pibt_soft_collision_penalty: " << pibt->soft_collision_penalty << std::endl
-               << "pibt_hindrance: " << (pibt->hindrance_tiebreak ? 1 : 0) << std::endl
-               << "pibt_hindrance_scope: " << pibt->hindrance_scope << std::endl
-               << "pibt_front_priority: " << (pibt->front_priority_enabled ? 1 : 0) << std::endl
-               << "pibt_phase_priority: " << (pibt->phase_priority_enabled ? 1 : 0) << std::endl
-               << "pibt_random_tiebreak: " << (pibt->random_tiebreak ? 1 : 0) << std::endl
-               << "pibt_regret_iterations: " << pibt->regret_iterations << std::endl
-               << "pibt_regret_weight: " << pibt->regret_weight << std::endl
-               << "pibt_regret_scope: " << pibt->regret_scope << std::endl;
+        output << "pibt_random_tiebreak: " << (pibt->random_tiebreak ? 1 : 0) << std::endl;
+    }
+    if (const auto* pibt2 = dynamic_cast<const PIBT2*>(&solver))
+    {
+        output << "pibt_random_tiebreak: " << (pibt2->random_tiebreak ? 1 : 0) << std::endl;
+        output << "pibt_candidate_randomness: simulation_seed_and_absolute_destination_timestep" << std::endl;
+        output << "pibt_initial_distance_policy: fixed_per_goal_leg" << std::endl;
+        output << "pibt_upstream: Kei18/pibt2" << std::endl;
+        output << "pibt_upstream_commit: faab5b916649549f1cd563df8dbf6e4f6382f631" << std::endl;
     }
     output.close();
 
     output.open(outfile + "/summary.csv", std::ios::out);
-    output << "service_rate,queue_wait_p95,queue_wait_km_p95,active_queue_agents,"
+    output << "service_rate,observed_service_rate,queue_wait_p95,queue_wait_km_p95,queue_wait_rmst100,"
+           << "queue_wait_survival_20,queue_wait_survival_50,queue_wait_survival_100,"
+           << "mean_queue_region_occupancy_per_station,active_queue_agents,"
            << "mean_plan_ms,plan_runtime_p95_ms,plan_runtime_max_ms,"
+           << "mean_amortized_ms_per_step,p95_amortized_ms_per_step,max_amortized_ms_per_step,"
            << "plan_runtime_slope_ms_per_1000_steps,completed_services,"
+           << "distance_per_completed_service,peak_rss_kb,clean_completion,time_to_stall,stall_event,"
            << "termination_reason,termination_timestep,terminated_by_traffic_jam,terminated_by_commit_repair_failure,"
-           << "terminated_by_solver_failure,"
-           << "pressure_active_fraction,pressured_station_fraction,mean_zone_occupancy_fraction,"
+           << "terminated_by_solver_failure,terminated_by_fallback_failure,"
+           << "pressure_active_fraction,pressured_station_fraction,mean_queue_region_occupancy_fraction,"
            << "traffic_jam_fraction,"
+           << "lra_fallback_episodes,lra_fallback_wait_commands,"
            << "pibt_inheritance_calls,pibt_backtracks,pibt_wait_fallbacks,pibt_pressure_rank_changes"
-           << ",pibt_regret_updates"
            << std::endl;
     auto episode_fraction = [&](int count) {
         if (planning_episodes == 0)
@@ -1256,35 +1413,65 @@ void WorkstationSystem::save_results()
             return 0.0;
         return std::accumulate(values.begin(), values.end(), 0.0) / values.size();
     };
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    const bool clean = termination_reason == "completed_simulation" &&
+        termination_timestep >= simulation_time;
+    const bool stalled = termination_reason == "traffic_jam";
+    const double distance_per_service = completed_services > 0 ?
+        static_cast<double>(distance_traveled) / completed_services : 0.0;
     output << compute_service_rate() << ","
-           << compute_queue_wait_p95() << ","
-           << compute_queue_wait_km_p95() << ","
+           << compute_observed_service_rate() << ",";
+    if (compute_queue_observation_count() > 0)
+    {
+        output << compute_queue_wait_p95() << ","
+               << compute_queue_wait_km_p95() << ","
+               << compute_queue_wait_rmst(100) << ","
+               << compute_queue_wait_survival(20) << ","
+               << compute_queue_wait_survival(50) << ","
+               << compute_queue_wait_survival(100) << ",";
+    }
+    else
+    {
+        output << ",,,,,,";
+    }
+    output << sample_mean(queue_region_occupancy_samples) << ","
            << compute_active_queue_agents() << ","
            << compute_mean_plan_ms() << ","
            << compute_plan_runtime_p95_ms() << ","
            << compute_plan_runtime_max_ms() << ","
+           << compute_mean_plan_ms() / std::max(1, simulation_window) << ","
+           << compute_plan_runtime_p95_ms() / std::max(1, simulation_window) << ","
+           << compute_plan_runtime_max_ms() / std::max(1, simulation_window) << ","
            << compute_plan_runtime_slope() << ","
            << completed_services << ","
+           << distance_per_service << ","
+           << usage.ru_maxrss << ","
+           << (clean ? 1 : 0) << ","
+           << std::max(0, termination_timestep) << ","
+           << (stalled ? 1 : 0) << ","
            << termination_reason << ","
            << termination_timestep << ","
            << (terminated_by_traffic_jam ? 1 : 0) << ","
            << (terminated_by_commit_repair_failure ? 1 : 0) << ","
            << (terminated_by_solver_failure ? 1 : 0) << ","
+           << (terminated_by_fallback_failure ? 1 : 0) << ","
            << episode_fraction(pressure_active_episodes) << ","
            << sample_mean(pressured_station_fraction_samples) << ","
-           << sample_mean(zone_occupancy_fraction_samples) << ","
+           << sample_mean(queue_region_occupancy_fraction_samples) << ","
            << episode_fraction(traffic_jam_episodes) << ","
+           << lra_fallback_episodes << ","
+           << lra_fallback_wait_commands << ","
            << pibt_inheritance_calls_total << ","
            << pibt_backtracks_total << ","
            << pibt_wait_fallbacks_total << ","
-           << pibt_pressure_rank_changes_total << ","
-           << pibt_regret_updates_total
+           << pibt_pressure_rank_changes_total
            << std::endl;
     output.close();
 
     output.open(outfile + "/planning_runtime.csv", std::ios::out);
     output << "episode,timestep,plan_ms,pressure_active,pressured_station_fraction,"
-           << "mean_zone_occupancy_fraction" << std::endl;
+           << "mean_queue_region_occupancy_fraction" << std::endl;
     for (size_t i = 0; i < mean_plan_ms_samples.size(); i++)
     {
         output << i << ","
@@ -1292,7 +1479,7 @@ void WorkstationSystem::save_results()
                << mean_plan_ms_samples[i] << ","
                << pressure_active_samples[i] << ","
                << pressured_station_fraction_samples[i] << ","
-               << zone_occupancy_fraction_samples[i]
+               << queue_region_occupancy_fraction_samples[i]
                << std::endl;
     }
     output.close();

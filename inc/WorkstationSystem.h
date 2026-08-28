@@ -44,7 +44,8 @@ public:
     int workstation_service_time = 3;
     string station_policy = "vanilla";
     string pibt_policy = "vanilla";
-    int workstation_pressure_threshold = -1;
+    bool native_failures_only = false;
+    bool commitment_repair = false;
     bool stop_at_traffic_jam = true;
 
     void simulate(int simulation_time);
@@ -53,12 +54,16 @@ public:
 private:
     const WorkstationGrid& G;
     vector<WorkstationAgentState> workstation_agents;
+    vector<vector<WorkstationAgentContext>> projected_goal_context;
     vector<int> queue_wait_samples;
     vector<double> mean_plan_ms_samples;
     vector<int> plan_timestep_samples;
     vector<int> pressure_active_samples;
     vector<double> pressured_station_fraction_samples;
-    vector<double> zone_occupancy_fraction_samples;
+    vector<double> queue_region_occupancy_fraction_samples;
+    vector<double> queue_region_occupancy_samples;
+    vector<int> pibt_executed_priority_age;
+    long long distance_traveled = 0;
     int completed_services = 0;
     int planning_episodes = 0;
     int pressure_active_episodes = 0;
@@ -67,12 +72,15 @@ private:
     uint64_t pibt_backtracks_total = 0;
     uint64_t pibt_wait_fallbacks_total = 0;
     uint64_t pibt_pressure_rank_changes_total = 0;
-    uint64_t pibt_regret_updates_total = 0;
+    int lra_fallback_episodes = 0;
+    uint64_t lra_fallback_wait_commands = 0;
+    bool last_episode_used_lra_fallback = false;
     string termination_reason = "not_started";
     int termination_timestep = -1;
     bool terminated_by_traffic_jam = false;
     bool terminated_by_commit_repair_failure = false;
     bool terminated_by_solver_failure = false;
+    bool terminated_by_fallback_failure = false;
 
     void initialize();
     void initialize_start_locations();
@@ -89,7 +97,6 @@ private:
     void sync_solver_context();
     bool solve_workstation_episode();
     void record_episode_diagnostics();
-    void seed_fixed_service_paths();
     void pad_paths_through_execution_window();
     void enforce_workstation_episode_commitments();
     bool resolve_committed_conflicts();
@@ -102,7 +109,11 @@ private:
     double compute_service_rate() const;
     double compute_queue_wait_p95() const;
     double compute_queue_wait_km_p95() const;
+    double compute_queue_wait_rmst(int horizon) const;
+    double compute_queue_wait_survival(int threshold) const;
+    double compute_observed_service_rate() const;
     int compute_active_queue_agents() const;
+    int compute_queue_observation_count() const;
     double compute_mean_plan_ms() const;
     double compute_plan_runtime_p95_ms() const;
     double compute_plan_runtime_max_ms() const;

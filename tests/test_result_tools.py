@@ -10,12 +10,34 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import aggregate_results  # noqa: E402
+import discover_publication_ladders  # noqa: E402
 import import_lorr_workstation  # noqa: E402
 import run_comparison  # noqa: E402
 import run_sortation_density  # noqa: E402
 
 
 class AggregateResultsTests(unittest.TestCase):
+    def test_hierarchical_effects_preserve_layout_pairing(self) -> None:
+        rows = []
+        for layout in (2, 3):
+            for seed in (6, 7):
+                for method, value in (("pibt_pressure_aware", 1.0), ("pibt_departure_aware", 0.0)):
+                    rows.append({
+                        "map": "sortation_small_p20",
+                        "agent_count": 100,
+                        "method": method,
+                        "pickup_layout_seed": layout,
+                        "seed": seed,
+                        "clean_completion": value,
+                    })
+        effects = aggregate_results.hierarchical_effect_rows(rows, iterations=100)
+        clean = next(row for row in effects if row["metric"] == "clean_completion")
+        self.assertEqual(clean["layout_seed_count"], 2)
+        self.assertEqual(clean["paired_run_count"], 4)
+        self.assertEqual(clean["mean_difference"], 1.0)
+        self.assertEqual(clean["bootstrap_ci95_low"], 1.0)
+        self.assertEqual(clean["bootstrap_ci95_high"], 1.0)
+
     def test_manifest_filter_excludes_stale_cells(self) -> None:
         rows = [
             {"map": "alley", "agent_count": 20, "method": "pibt_pressure", "seed": 1},
@@ -96,8 +118,118 @@ class AggregateResultsTests(unittest.TestCase):
         self.assertEqual(rows[0]["queue_wait_km_p95"], 500.0)
         self.assertEqual(rows[1]["queue_wait_km_p95"], 120.0)
 
+    def test_stall_kaplan_meier_uses_actual_censor_times(self) -> None:
+        curve = aggregate_results.kaplan_meier_curve([
+            {"time_to_stall": 100, "stall_event": 1},
+            {"time_to_stall": 200, "stall_event": 0},
+            {"time_to_stall": 300, "stall_event": 1},
+        ])
+        self.assertEqual(curve[1]["at_risk"], 3)
+        self.assertAlmostEqual(curve[1]["survival_probability"], 2 / 3)
+        self.assertEqual(curve[2]["censored"], 1)
+        self.assertEqual(curve[3]["at_risk"], 1)
+        self.assertEqual(curve[3]["survival_probability"], 0.0)
+
 
 class RunComparisonTests(unittest.TestCase):
+    def test_publication_pibt_methods_use_public_core_port(self) -> None:
+        for method in run_comparison.PUBLICATION_METHODS:
+            if method.startswith("pibt_"):
+                self.assertEqual(run_comparison.METHODS[method]["solver"], "PIBT2")
+        self.assertEqual(run_comparison.METHODS["pibt_legacy_vanilla"]["solver"], "PIBT")
+
+    def test_departure_aware_methods_are_publication_defaults(self) -> None:
+        self.assertEqual(
+            run_comparison.METHODS["pbs_departure_aware"],
+            {"solver": "PBS", "station_policy": "departure_aware"},
+        )
+        self.assertEqual(
+            run_comparison.METHODS["pibt_departure_aware"],
+            {"solver": "PIBT2", "pibt_policy": "departure_aware"},
+        )
+        self.assertIn("pbs_departure_aware", run_comparison.PUBLICATION_METHODS)
+        self.assertIn("pibt_departure_aware", run_comparison.PUBLICATION_METHODS)
+        self.assertNotIn("pbs_phase_aware", run_comparison.METHODS)
+        self.assertNotIn("pibt_phase_aware", run_comparison.METHODS)
+
+    def test_pressure_manifest_records_aligned_timestep_semantics(self) -> None:
+        self.assertEqual(
+            run_comparison.PRESSURE_DEFINITION["pressure_evaluation"],
+            "projected_each_step",
+        )
+        self.assertEqual(
+            run_comparison.PRESSURE_DEFINITION["pressure_action_timing"],
+            "state_t_scores_action_t_plus_1",
+        )
+        self.assertEqual(
+            run_comparison.PRESSURE_DEFINITION["pressure_task_metadata"],
+            "executed_only",
+        )
+
+    def test_publication_terminal_classification_keeps_runtime_distinct(self) -> None:
+        stalled = [{"status": "failed", "failure_reason": "traffic_jam"}] * 3
+        timed_out = [{"status": "failed", "failure_reason": "wall_timeout"}] * 3
+        mixed = [stalled[0], timed_out[0], {"status": "clean", "failure_reason": "clean"}]
+        self.assertEqual(
+            discover_publication_ladders.classify_terminal(stalled),
+            (True, "empirical_stall"),
+        )
+        self.assertEqual(
+            discover_publication_ladders.classify_terminal(timed_out),
+            (True, "runtime_limit"),
+        )
+        self.assertEqual(
+            discover_publication_ladders.classify_terminal(mixed),
+            (False, "none"),
+        )
+        native = [{"status": "failed", "failure_reason": "solver_failure"}] * 3
+        self.assertEqual(
+            discover_publication_ladders.classify_terminal(native),
+            (True, "native_failure_boundary"),
+        )
+
+    def test_publication_counts_are_even_and_below_terminal(self) -> None:
+        counts = discover_publication_ladders.frozen_counts(8000, 16000)
+        self.assertEqual(counts, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 16000])
+
+    def test_publication_discovery_backs_off_from_failed_start(self) -> None:
+        self.assertEqual(
+            discover_publication_ladders.descending_probes(2000, 500),
+            [1000, 500],
+        )
+
+    def test_classification_requires_explicit_clean_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            log = root / "run.log"
+            log.write_text("")
+            summary = root / "summary.csv"
+            summary.write_text("clean_completion,termination_reason\n0,invalid_execution\n")
+            self.assertEqual(
+                run_comparison.classify_run(log, summary, 0, False),
+                ("failed", "invalid_execution"),
+            )
+            summary.write_text("clean_completion,termination_reason\n1,completed_simulation\n")
+            self.assertEqual(
+                run_comparison.classify_run(log, summary, 0, False),
+                ("clean", "clean"),
+            )
+
+    def test_signal_terminated_status_is_not_reused(self) -> None:
+        signature = {"seed": 1}
+        self.assertFalse(
+            run_comparison.status_is_reusable(
+                {"status": "failed", "return_code": -2, "run_signature": signature},
+                signature,
+            )
+        )
+        self.assertTrue(
+            run_comparison.status_is_reusable(
+                {"status": "failed", "return_code": 0, "run_signature": signature},
+                signature,
+            )
+        )
+
     def test_reset_run_outputs_removes_append_only_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cell_dir = Path(temp_dir)
@@ -128,7 +260,7 @@ class RunComparisonTests(unittest.TestCase):
         self.assertFalse(run_sortation_density.all_methods_failed(statuses))
 
     def test_run_signature_ignores_outer_batch_parallelism(self) -> None:
-        expected = {"method": "pibt_pressure", "seed": 1}
+        expected = {"method": "pibt_pressure_aware", "seed": 1}
         existing = {**expected, "batch_jobs": 6}
         self.assertTrue(run_comparison.signatures_match(existing, expected))
         self.assertFalse(
@@ -141,6 +273,48 @@ class RunComparisonTests(unittest.TestCase):
         self.assertEqual(probes[0], 50)
         self.assertEqual(probes[-1], 1106)
         self.assertTrue(all(50 <= count <= 1106 for count in probes))
+
+    def test_density_frontier_reuses_known_clean_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            path = run_sortation_density.status_path(
+                root, "large", 5, 22750, "pibt_pressure_aware", 2
+            )
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"status": "clean"}))
+            self.assertTrue(
+                run_sortation_density.has_known_clean_status(
+                    root, "large", 5, 22750, list(range(1, 11))
+                )
+            )
+            self.assertFalse(
+                run_sortation_density.has_known_clean_status(
+                    root, "large", 5, 22750, [1]
+                )
+            )
+
+    def test_capped_frontier_diagnostics_load_only_evaluated_seeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for method in run_sortation_density.METHODS:
+                for seed in (1, 2, 3):
+                    path = run_sortation_density.status_path(
+                        root, "large", 10, 25000, method, seed
+                    )
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps({"status": "clean"}))
+            statuses = run_sortation_density.load_cell_statuses(
+                root,
+                "large",
+                10,
+                25000,
+                list(range(1, 11)),
+                require_all=False,
+            )
+        self.assertEqual(
+            {method: len(entries) for method, entries in statuses.items()},
+            {method: 3 for method in run_sortation_density.METHODS},
+        )
 
 
 class LorrAdapterTests(unittest.TestCase):
@@ -303,6 +477,15 @@ class LorrAdapterTests(unittest.TestCase):
                 "pickup_counts": [605, 1210, 2419, 6048, 12096],
                 "capacities": [19371, 18766, 17557, 13928, 7880],
                 "side_counts": {"top": 48, "right": 33, "bottom": 48, "left": 33},
+            },
+            "sortation_large": {
+                "source_url": (
+                    "https://github.com/MAPF-Competition/Benchmark-Archive/blob/main/"
+                    "2023%20Competition/Problem%20Generator/script/sortation_large.map"
+                ),
+                "pickup_counts": [1565, 3130, 6259, 15648, 31296],
+                "capacities": [49011, 47446, 44317, 34928, 19280],
+                "side_counts": {"top": 123, "right": 33, "bottom": 123, "left": 33},
             },
         }
         retentions = [5, 10, 20, 50, 100]
