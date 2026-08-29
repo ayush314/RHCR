@@ -34,12 +34,19 @@ PRESSURE_DEFINITION = {
     "pressure_task_metadata": "executed_only",
     "pressure_threshold": 3,
     "pressure_queue_cost": 2,
-    "pressure_privileged_inbound_count": 2,
+    "pressure_privileged_inbound_count": 4,
+    "pressure_privilege_key": [
+        "inside_target_queue", "distance_to_workstation",
+        "station_leg_issue_time", "agent_id",
+    ],
     "pressure_priority_parent": "departure_aware",
     "departure_aware_protected_phases": ["TO_EXIT"],
     "mandatory_service_dwell": True,
     "mandatory_service_dwell_handling": "policy_independent",
     "service_priority_enabled": False,
+    "traffic_jam_rule": (
+        "rhcr_majority_wait_full_execution_window_and_no_service_completion"
+    ),
 }
 PUBLICATION_METHODS = (
     "pbs_vanilla", "pbs_departure_aware", "pbs_pressure_aware",

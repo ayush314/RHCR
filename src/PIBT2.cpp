@@ -49,7 +49,8 @@ void PIBT2::clear()
     solution_cost = -2;
     avg_path_length = -1;
     min_sum_of_costs = 0;
-    solution.clear();
+    for (Path& path : solution)
+        path.clear();
     agents.clear();
     occupied_now.clear();
     occupied_next.clear();
@@ -80,7 +81,13 @@ bool PIBT2::initialize_run_state()
     occupied_now.assign(G.size(), -1);
     occupied_next.assign(G.size(), -1);
     agents.resize(num_of_agents);
-    solution.assign(num_of_agents, Path());
+    solution.resize(num_of_agents);
+    const size_t path_capacity = static_cast<size_t>(std::max(1, window)) + 1;
+    for (Path& path : solution)
+    {
+        path.clear();
+        path.reserve(path_capacity);
+    }
     std::mt19937 priority_engine(
         static_cast<std::mt19937::result_type>(tie_seed));
     std::uniform_real_distribution<float> tie_distribution(0.0f, 1.0f);
@@ -118,14 +125,31 @@ void PIBT2::seed_step_random_engine(int local_t)
 {
     const uint64_t absolute_timestep = static_cast<uint64_t>(
         std::max(0, episode_start_timestep) + std::max(1, local_t));
-    std::seed_seq seed{
-        static_cast<uint32_t>(tie_seed),
-        static_cast<uint32_t>(tie_seed >> 32),
-        static_cast<uint32_t>(absolute_timestep),
-        static_cast<uint32_t>(absolute_timestep >> 32),
-        0x50494254U,
-    };
-    random_engine.seed(seed);
+    const size_t cache_size = static_cast<size_t>(std::max(2, window + 1));
+    if (step_random_cache.size() != cache_size ||
+        !step_random_cache_seed_valid || step_random_cache_seed != tie_seed)
+    {
+        step_random_cache.assign(cache_size, StepRandomCacheEntry());
+        step_random_cache_seed = tie_seed;
+        step_random_cache_seed_valid = true;
+    }
+
+    StepRandomCacheEntry& cached =
+        step_random_cache[absolute_timestep % cache_size];
+    if (!cached.valid || cached.timestep != absolute_timestep)
+    {
+        std::seed_seq seed{
+            static_cast<uint32_t>(tie_seed),
+            static_cast<uint32_t>(tie_seed >> 32),
+            static_cast<uint32_t>(absolute_timestep),
+            static_cast<uint32_t>(absolute_timestep >> 32),
+            0x50494254U,
+        };
+        cached.engine.seed(seed);
+        cached.timestep = absolute_timestep;
+        cached.valid = true;
+    }
+    random_engine = cached.engine;
 }
 
 bool PIBT2::advance_goal_index(int agent, const State& state, int local_t)
@@ -191,42 +215,57 @@ int PIBT2::distance_to_target(int agent, int loc) const
 
 bool PIBT2::departure_protected(int agent) const
 {
+    if (agent >= 0 && agent < static_cast<int>(pressure_contexts.size()))
+    {
+        return workstation_policy_protects_phase(
+            pibt_policy, pressure_contexts[agent].phase);
+    }
     return workstation_policy_protects_phase(
         pibt_policy, active_context(agent).phase);
 }
 
 void PIBT2::update_pressure_state(const vector<State>& current_states)
 {
-    pressure_snapshot = WorkstationPressureSnapshot();
     pressure_contexts.clear();
+    pressure_penalty_station.assign(current_states.size(), -1);
     if (active_policy() != Policy::PRESSURE_AWARE)
         return;
     if (workstation_grid == nullptr)
         return;
 
-    vector<int> locations;
-    locations.reserve(current_states.size());
+    pressure_locations_scratch.resize(current_states.size());
     pressure_contexts.reserve(current_states.size());
     for (int agent = 0; agent < static_cast<int>(current_states.size()); agent++)
     {
-        locations.push_back(current_states[agent].location);
+        pressure_locations_scratch[agent] = current_states[agent].location;
         pressure_contexts.push_back(active_context(agent));
     }
-    pressure_snapshot = evaluate_workstation_pressure(
-        *workstation_grid, locations, pressure_contexts);
-}
+    evaluate_workstation_pressure(
+        *workstation_grid, pressure_locations_scratch, pressure_contexts,
+        pressure_snapshot, pressure_workspace);
 
-int PIBT2::pressure_cost(int agent, int candidate_loc) const
-{
-    if (active_policy() != Policy::PRESSURE_AWARE)
-        return 0;
-    if (workstation_grid == nullptr ||
-        agent < 0 || agent >= (int)workstation_context.size())
-        return 0;
+    for (int agent = 0; agent < static_cast<int>(pressure_contexts.size()); agent++)
+    {
+        const WorkstationAgentContext& context = pressure_contexts[agent];
+        const int station_id = context.station_id;
+        if (context.phase != WorkstationAgentPhase::TO_STATION ||
+            station_id < 0 ||
+            station_id >= static_cast<int>(workstation_grid->stations.size()) ||
+            station_id >= static_cast<int>(pressure_snapshot.station_pressure.size()) ||
+            !workstation_pressure_active(
+                pressure_snapshot.station_pressure[station_id]))
+        {
+            continue;
+        }
 
-    return workstation_pressure_action_cost(
-        *workstation_grid, pressure_snapshot, pressure_contexts,
-        agent, candidate_loc);
+        const vector<int>& privileged =
+            pressure_snapshot.privileged_inbound_agents[station_id];
+        if (std::find(privileged.begin(), privileged.end(), agent) ==
+            privileged.end())
+        {
+            pressure_penalty_station[agent] = station_id;
+        }
+    }
 }
 
 bool PIBT2::must_hold_for_workstation_service(int agent, const State& state) const
@@ -269,17 +308,19 @@ bool PIBT2::violates_initial_constraint(int agent, int loc, int local_t) const
     return false;
 }
 
-vector<State> PIBT2::ranked_candidates(int agent, int local_t)
+PIBT2::CandidateList PIBT2::ranked_candidates(int agent, int local_t)
 {
     const State& current = agents[agent].current;
-    vector<State> candidates;
+    CandidateList candidates;
+    auto push_candidate = [&](const State& candidate) {
+        candidates.states[candidates.size++] = candidate;
+    };
 
-    if (current_target(agent) < 0 ||
-        must_hold_for_workstation_service(agent, current))
+    if (current_target(agent) < 0)
     {
         State wait = current;
         wait.timestep = local_t;
-        candidates.push_back(wait);
+        push_candidate(wait);
         return candidates;
     }
 
@@ -288,24 +329,55 @@ vector<State> PIBT2::ranked_candidates(int agent, int local_t)
     {
         State committed = initial_paths[agent][local_t];
         committed.timestep = local_t;
-        candidates.push_back(committed);
+        push_candidate(committed);
         return candidates;
     }
 
-    for (State candidate : G.get_neighbors(current))
+    if (current.location >= 0 && current.orientation >= 0)
     {
-        candidate.timestep = local_t;
-        candidates.push_back(candidate);
+        push_candidate(State(current.location, local_t, current.orientation));
+        if (G.valid_move(current.location, current.orientation))
+        {
+            push_candidate(State(
+                current.location + G.move[current.orientation], local_t,
+                current.orientation));
+        }
+        const int next_orientation1 = (current.orientation + 1) % 4;
+        const int next_orientation2 = (current.orientation + 3) % 4;
+        push_candidate(State(current.location, local_t, next_orientation1));
+        push_candidate(State(current.location, local_t, next_orientation2));
+    }
+    else if (current.location >= 0)
+    {
+        push_candidate(State(current.location, local_t));
+        for (int direction = 0; direction < 4; direction++)
+        {
+            if (G.valid_move(current.location, direction))
+            {
+                push_candidate(State(
+                    current.location + G.move[direction], local_t));
+            }
+        }
     }
 
     if (random_tiebreak)
-        std::shuffle(candidates.begin(), candidates.end(), random_engine);
+    {
+        std::shuffle(
+            candidates.states.begin(),
+            candidates.states.begin() + candidates.size,
+            random_engine);
+    }
     else
-        std::sort(candidates.begin(), candidates.end(), [](const State& lhs, const State& rhs) {
-            if (lhs.location != rhs.location)
-                return lhs.location < rhs.location;
-            return lhs.orientation < rhs.orientation;
-        });
+    {
+        std::sort(
+            candidates.states.begin(),
+            candidates.states.begin() + candidates.size,
+            [](const State& lhs, const State& rhs) {
+                if (lhs.location != rhs.location)
+                    return lhs.location < rhs.location;
+                return lhs.orientation < rhs.orientation;
+            });
+    }
 
     struct RankedCandidate
     {
@@ -315,19 +387,34 @@ vector<State> PIBT2::ranked_candidates(int agent, int local_t)
         bool occupied;
     };
     const bool pressure_aware = active_policy() == Policy::PRESSURE_AWARE;
-    vector<RankedCandidate> ranked;
-    ranked.reserve(candidates.size());
-    for (const State& candidate : candidates)
+    const int pressure_station =
+        pressure_aware && agent >= 0 &&
+        agent < static_cast<int>(pressure_penalty_station.size()) ?
+            pressure_penalty_station[agent] : -1;
+    std::array<RankedCandidate, 5> ranked;
+    for (size_t index = 0; index < candidates.size; index++)
     {
+        const State& candidate = candidates.states[index];
         const int distance = distance_to_target(agent, candidate.location);
-        const int cost = pressure_aware ?
-            pressure_cost(agent, candidate.location) : 0;
-        ranked.push_back({
+        int cost = 0;
+        if (pressure_station >= 0)
+        {
+            const bool in_station_zone =
+                workstation_grid->has_complete_zone_index() ?
+                    workstation_grid->station_for_zone_cell(candidate.location) ==
+                        pressure_station :
+                    workstation_grid->stations[pressure_station].zone_cells.find(
+                        candidate.location) !=
+                        workstation_grid->stations[pressure_station].zone_cells.end();
+            if (in_station_zone)
+                cost = kWorkstationPressureQueueCost;
+        }
+        ranked[index] = {
             candidate,
             distance,
             static_cast<long long>(distance) + cost,
             occupied_now[candidate.location] >= 0,
-        });
+        };
     }
 
     auto canonical_less = [](const RankedCandidate& lhs,
@@ -349,30 +436,31 @@ vector<State> PIBT2::ranked_candidates(int agent, int local_t)
 
     if (!pressure_aware)
     {
-        std::sort(ranked.begin(), ranked.end(), canonical_less);
-        for (size_t index = 0; index < ranked.size(); index++)
-            candidates[index] = ranked[index].state;
+        std::sort(ranked.begin(), ranked.begin() + candidates.size, canonical_less);
+        for (size_t index = 0; index < candidates.size; index++)
+            candidates.states[index] = ranked[index].state;
         return candidates;
     }
 
     const RankedCandidate canonical_front = *std::min_element(
-        ranked.begin(), ranked.end(), canonical_less);
-    std::sort(ranked.begin(), ranked.end(), policy_less);
-    if (!ranked.empty() &&
+        ranked.begin(), ranked.begin() + candidates.size, canonical_less);
+    std::sort(ranked.begin(), ranked.begin() + candidates.size, policy_less);
+    if (candidates.size > 0 &&
         canonical_front.state.location != ranked.front().state.location)
     {
         pressure_rank_changes++;
     }
-    for (size_t index = 0; index < ranked.size(); index++)
-        candidates[index] = ranked[index].state;
+    for (size_t index = 0; index < candidates.size; index++)
+        candidates.states[index] = ranked[index].state;
     return candidates;
 }
 
 bool PIBT2::func_pibt(int agent, int parent, int local_t)
 {
-    const vector<State> candidates = ranked_candidates(agent, local_t);
-    for (const State& candidate : candidates)
+    const CandidateList candidates = ranked_candidates(agent, local_t);
+    for (size_t index = 0; index < candidates.size; index++)
     {
+        const State& candidate = candidates.states[index];
         const int loc = candidate.location;
         if (loc < 0 || loc >= G.size())
             continue;
@@ -410,8 +498,6 @@ bool PIBT2::func_pibt(int agent, int parent, int local_t)
 bool PIBT2::validate_step(const vector<State>& current_states,
                           const vector<State>& next_states) const
 {
-    vector<int> current_occupant(G.size(), -1);
-    vector<int> next_occupant(G.size(), -1);
     for (int agent = 0; agent < num_of_agents; agent++)
     {
         const int current_loc = current_states[agent].location;
@@ -421,13 +507,11 @@ bool PIBT2::validate_step(const vector<State>& current_states,
         {
             return false;
         }
-        if (current_occupant[current_loc] >= 0 || next_occupant[next_loc] >= 0 ||
+        if (occupied_now[current_loc] != agent || occupied_next[next_loc] != agent ||
             violates_initial_constraint(agent, next_loc, next_states[agent].timestep))
         {
             return false;
         }
-        current_occupant[current_loc] = agent;
-        next_occupant[next_loc] = agent;
     }
     for (int agent = 0; agent < num_of_agents; agent++)
     {
@@ -435,7 +519,7 @@ bool PIBT2::validate_step(const vector<State>& current_states,
         const int next_loc = next_states[agent].location;
         if (current_loc == next_loc)
             continue;
-        const int other = current_occupant[next_loc];
+        const int other = occupied_now[next_loc];
         if (other >= 0 && other != agent && next_states[other].location == current_loc)
             return false;
     }
@@ -498,22 +582,22 @@ bool PIBT2::plan_one_step(int local_t, vector<State>& current_states)
     }
 
     update_pressure_state(current_states);
-    vector<int> order;
-    order.reserve(num_of_agents);
-    vector<char> protected_class(num_of_agents, 0);
+    order_scratch.clear();
+    order_scratch.reserve(num_of_agents);
+    protected_class_scratch.assign(num_of_agents, 0);
     for (int agent = 0; agent < num_of_agents; agent++)
     {
         if (!agents[agent].has_next)
-            order.push_back(agent);
+            order_scratch.push_back(agent);
     }
     if (active_policy() != Policy::VANILLA)
     {
         for (int agent = 0; agent < num_of_agents; agent++)
-            protected_class[agent] = departure_protected(agent);
+            protected_class_scratch[agent] = departure_protected(agent);
     }
-    std::sort(order.begin(), order.end(), [&](int lhs, int rhs) {
-        if (protected_class[lhs] != protected_class[rhs])
-            return protected_class[lhs] != 0;
+    std::sort(order_scratch.begin(), order_scratch.end(), [&](int lhs, int rhs) {
+        if (protected_class_scratch[lhs] != protected_class_scratch[rhs])
+            return protected_class_scratch[lhs] != 0;
         if (agents[lhs].elapsed != agents[rhs].elapsed)
             return agents[lhs].elapsed > agents[rhs].elapsed;
         if (agents[lhs].initial_distance != agents[rhs].initial_distance)
@@ -521,27 +605,27 @@ bool PIBT2::plan_one_step(int local_t, vector<State>& current_states)
         return agents[lhs].tie_breaker > agents[rhs].tie_breaker;
     });
 
-    for (int agent : order)
+    for (int agent : order_scratch)
     {
         if (!agents[agent].has_next)
             func_pibt(agent, -1, local_t);
     }
 
-    vector<State> next_states(num_of_agents);
+    next_states_scratch.resize(num_of_agents);
     for (int agent = 0; agent < num_of_agents; agent++)
     {
         if (!agents[agent].has_next)
             return false;
-        next_states[agent] = agents[agent].next;
-        next_states[agent].timestep = local_t;
+        next_states_scratch[agent] = agents[agent].next;
+        next_states_scratch[agent].timestep = local_t;
     }
-    if (!validate_step(current_states, next_states))
+    if (!validate_step(current_states, next_states_scratch))
         return false;
 
     for (int agent = 0; agent < num_of_agents; agent++)
-        solution[agent].push_back(next_states[agent]);
-    update_dynamic_priorities(next_states, local_t);
-    current_states = next_states;
+        solution[agent].push_back(next_states_scratch[agent]);
+    update_dynamic_priorities(next_states_scratch, local_t);
+    current_states = next_states_scratch;
     return true;
 }
 

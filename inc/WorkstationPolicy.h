@@ -8,6 +8,12 @@ struct WorkstationPressureSnapshot
     vector<vector<int>> privileged_inbound_agents;
 };
 
+struct WorkstationPressureWorkspace
+{
+    vector<vector<int>> inbound_by_station;
+    vector<pair<tuple<int, int, int, int>, int>> ranked_inbound;
+};
+
 struct WorkstationPressureBaseSnapshot
 {
     vector<int> station_pressure;
@@ -18,6 +24,13 @@ WorkstationPressureSnapshot evaluate_workstation_pressure(
     const WorkstationGrid& grid,
     const vector<int>& agent_locations,
     const vector<WorkstationAgentContext>& agent_contexts);
+
+void evaluate_workstation_pressure(
+    const WorkstationGrid& grid,
+    const vector<int>& agent_locations,
+    const vector<WorkstationAgentContext>& agent_contexts,
+    WorkstationPressureSnapshot& snapshot,
+    WorkstationPressureWorkspace& workspace);
 
 int workstation_pressure_action_cost(
     const WorkstationGrid& grid,

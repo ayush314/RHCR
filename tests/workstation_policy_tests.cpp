@@ -158,6 +158,39 @@ public:
     bool load_map(string) override { return true; }
 };
 
+class SevenCellWorkstationGraph : public WorkstationGrid
+{
+public:
+    SevenCellWorkstationGraph()
+    {
+        rows = 1;
+        cols = 7;
+        move[0] = -7;
+        move[1] = 1;
+        move[2] = 7;
+        move[3] = -1;
+        types.assign(7, "Travel");
+        types[6] = "Workstation";
+        weights.assign(7, vector<double>(5, WEIGHT_MAX));
+        for (int loc = 0; loc < 6; loc++)
+        {
+            weights[loc][1] = 1;
+            weights[loc + 1][3] = 1;
+        }
+        for (int loc = 0; loc < 7; loc++)
+            weights[loc][4] = 1;
+        heuristics[6] = {6, 5, 4, 3, 2, 1, 0};
+        WorkstationStation station;
+        station.station_id = 0;
+        station.workstation = 6;
+        station.exit_cells = {5};
+        station.zone_cells = {2, 3, 4, 5, 6};
+        stations.push_back(station);
+    }
+
+    bool load_map(string) override { return true; }
+};
+
 int main()
 {
     assert(is_valid_workstation_policy("vanilla"));
@@ -209,8 +242,11 @@ int main()
         3, WorkstationAgentPhase::SERVICE,
         7, WorkstationAgentPhase::SERVICE, preferred_priority));
     assert(kWorkstationPressureThreshold == 3);
-    assert(kWorkstationPrivilegedInboundCount == 2);
+    assert(kWorkstationPrivilegedInboundCount == 4);
     assert(kWorkstationPressureQueueCost == 2);
+    assert(workstation_window_is_stalled(true, 10, 10));
+    assert(!workstation_window_is_stalled(true, 10, 11));
+    assert(!workstation_window_is_stalled(false, 10, 10));
     const std::vector<bool> occupies_queue = {true, false, true, true};
     assert(count_workstation_pressure(4, [&](int agent) {
         return occupies_queue[agent];
@@ -223,27 +259,31 @@ int main()
         {4, workstation_privilege_key(false, 2, 10, 4)},
         {7, workstation_privilege_key(true, 8, 20, 7)},
         {9, workstation_privilege_key(false, 1, 30, 9)},
+        {10, workstation_privilege_key(false, 3, 40, 10)},
+        {11, workstation_privilege_key(false, 4, 50, 11)},
     };
     const auto selected = select_workstation_privileged_agents(
-        std::vector<int>{4, 7, 9},
+        std::vector<int>{4, 7, 9, 10, 11},
         [&](int agent) { return privilege_keys.at(agent); });
-    assert((selected == std::vector<int>{7, 9}));
+    assert((selected == std::vector<int>{7, 9, 4, 10}));
 
     FiveCellWorkstationGraph pressure_graph;
-    vector<WorkstationAgentContext> aligned_contexts(4);
+    vector<WorkstationAgentContext> aligned_contexts(6);
     for (WorkstationAgentContext& context : aligned_contexts)
     {
         context.station_id = 0;
         context.phase = WorkstationAgentPhase::TO_STATION;
         context.task_issue_t = 10;
     }
-    const vector<int> pressured_locations = {0, 2, 3, 4};
+    // Historical queue entry must not outrank agents currently in the queue.
+    aligned_contexts[0].boundary_entry_t = 1;
+    const vector<int> pressured_locations = {0, 0, 1, 2, 3, 4};
     const WorkstationPressureSnapshot pressure_snapshot =
         evaluate_workstation_pressure(
             pressure_graph, pressured_locations, aligned_contexts);
-    REQUIRE(pressure_snapshot.station_pressure[0] == 3);
+    REQUIRE(pressure_snapshot.station_pressure[0] == 4);
     REQUIRE((pressure_snapshot.privileged_inbound_agents[0] ==
-             vector<int>{3, 2}));
+             vector<int>{5, 4, 3, 2}));
     REQUIRE(workstation_pressure_action_cost(
         pressure_graph, pressure_snapshot, aligned_contexts, 0, 1) == 2);
     const WorkstationPressureBaseSnapshot pressure_base =
@@ -253,7 +293,7 @@ int main()
         pressure_graph, pressure_base, aligned_contexts[0], 0, 0, 1) ==
         workstation_pressure_action_cost(
             pressure_graph, pressure_snapshot, aligned_contexts, 0, 1));
-    for (int agent = 0; agent < 4; agent++)
+    for (int agent = 0; agent < 6; agent++)
     {
         const WorkstationPressureBaseSnapshot agent_base =
             evaluate_workstation_pressure_without_agent(
@@ -276,7 +316,7 @@ int main()
         pressure_graph, pressure_snapshot, exit_contexts, 0, 1) == 0);
     const WorkstationPressureSnapshot unpressured_snapshot =
         evaluate_workstation_pressure(
-            pressure_graph, vector<int>{0, 0, 1, 2}, aligned_contexts);
+            pressure_graph, vector<int>{0, 0, 0, 0, 1, 2}, aligned_contexts);
     REQUIRE(workstation_pressure_action_cost(
         pressure_graph, unpressured_snapshot, aligned_contexts, 0, 1) == 0);
 
@@ -424,34 +464,46 @@ int main()
     REQUIRE(pibt2_swap.backtracks > 0);
     REQUIRE(pibt2_swap.wait_fallbacks == 0);
 
+    SevenCellWorkstationGraph integration_pressure_graph;
+    vector<WorkstationAgentContext> integration_contexts(5);
+    for (WorkstationAgentContext& context : integration_contexts)
+    {
+        context.station_id = 0;
+        context.phase = WorkstationAgentPhase::TO_STATION;
+        context.task_issue_t = 10;
+    }
+    const vector<vector<WorkstationAgentContext>> integration_projected_contexts(
+        5, vector<WorkstationAgentContext>(1, integration_contexts.front()));
     StateTimeAStar aligned_pibt_path_planner;
-    PIBT2 vanilla_pressure_control(pressure_graph, aligned_pibt_path_planner);
+    PIBT2 vanilla_pressure_control(
+        integration_pressure_graph, aligned_pibt_path_planner);
     vanilla_pressure_control.window = 1;
     vanilla_pressure_control.random_tiebreak = false;
     vanilla_pressure_control.set_pibt_policy("vanilla");
-    vanilla_pressure_control.set_workstation_context(aligned_contexts);
+    vanilla_pressure_control.set_workstation_context(integration_contexts);
     vanilla_pressure_control.set_projected_goal_context(
-        vector<vector<WorkstationAgentContext>>(4, aligned_contexts));
+        integration_projected_contexts);
     const vector<State> pressure_starts = {
-        State(0, 0, -1), State(2, 0, -1),
-        State(3, 0, -1), State(4, 0, -1),
+        State(1, 0, -1), State(3, 0, -1), State(4, 0, -1),
+        State(5, 0, -1), State(6, 0, -1),
     };
     const vector<vector<pair<int, int>>> pressure_goals = {
-        {{4, 0}}, {{2, 0}}, {{3, 0}}, {{4, 0}},
+        {{6, 0}}, {{3, 0}}, {{4, 0}}, {{5, 0}}, {{6, 0}},
     };
     REQUIRE(vanilla_pressure_control.run(
         pressure_starts, pressure_goals, 10));
-    REQUIRE(vanilla_pressure_control.solution[0][1].location == 1);
+    REQUIRE(vanilla_pressure_control.solution[0][1].location == 2);
 
-    PIBT2 aligned_pressure_pibt(pressure_graph, aligned_pibt_path_planner);
+    PIBT2 aligned_pressure_pibt(
+        integration_pressure_graph, aligned_pibt_path_planner);
     aligned_pressure_pibt.window = 1;
     aligned_pressure_pibt.random_tiebreak = false;
     aligned_pressure_pibt.set_pibt_policy("pressure_aware");
-    aligned_pressure_pibt.set_workstation_context(aligned_contexts);
+    aligned_pressure_pibt.set_workstation_context(integration_contexts);
     aligned_pressure_pibt.set_projected_goal_context(
-        vector<vector<WorkstationAgentContext>>(4, aligned_contexts));
+        integration_projected_contexts);
     REQUIRE(aligned_pressure_pibt.run(pressure_starts, pressure_goals, 10));
-    REQUIRE(aligned_pressure_pibt.solution[0][1].location == 0);
+    REQUIRE(aligned_pressure_pibt.solution[0][1].location == 1);
     REQUIRE(aligned_pressure_pibt.pressure_rank_changes > 0);
 
     ThreeCellGraph three_cell_graph;

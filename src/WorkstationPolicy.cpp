@@ -32,12 +32,15 @@ tuple<int, int, int, int> pressure_key(
 {
     const int issue_time = context.task_issue_t >= 0 ?
         context.task_issue_t : kMissingPriorityValue;
+    const bool inside_target_queue =
+        station_for_location(grid, location) == station_id;
     return workstation_privilege_key(
-        context.boundary_entry_t >= 0,
+        inside_target_queue,
         grid.distance_to_workstation(station_id, location),
         issue_time,
         agent);
 }
+
 }
 
 WorkstationPressureSnapshot evaluate_workstation_pressure(
@@ -46,11 +49,28 @@ WorkstationPressureSnapshot evaluate_workstation_pressure(
     const vector<WorkstationAgentContext>& agent_contexts)
 {
     WorkstationPressureSnapshot snapshot;
-    snapshot.station_pressure.assign(grid.stations.size(), 0);
-    snapshot.privileged_inbound_agents.assign(
-        grid.stations.size(), vector<int>());
-    vector<vector<int>> inbound_by_station(
-        grid.stations.size(), vector<int>());
+    WorkstationPressureWorkspace workspace;
+    evaluate_workstation_pressure(
+        grid, agent_locations, agent_contexts, snapshot, workspace);
+    return snapshot;
+}
+
+void evaluate_workstation_pressure(
+    const WorkstationGrid& grid,
+    const vector<int>& agent_locations,
+    const vector<WorkstationAgentContext>& agent_contexts,
+    WorkstationPressureSnapshot& snapshot,
+    WorkstationPressureWorkspace& workspace)
+{
+    const size_t station_count = grid.stations.size();
+    snapshot.station_pressure.assign(station_count, 0);
+    snapshot.privileged_inbound_agents.resize(station_count);
+    workspace.inbound_by_station.resize(station_count);
+    for (size_t station_id = 0; station_id < station_count; station_id++)
+    {
+        snapshot.privileged_inbound_agents[station_id].clear();
+        workspace.inbound_by_station[station_id].clear();
+    }
 
     for (size_t agent = 0; agent < agent_locations.size(); agent++)
     {
@@ -69,42 +89,44 @@ WorkstationPressureSnapshot evaluate_workstation_pressure(
             context.station_id >= 0 &&
             context.station_id < static_cast<int>(grid.stations.size()))
         {
-            inbound_by_station[context.station_id].push_back(
+            workspace.inbound_by_station[context.station_id].push_back(
                 static_cast<int>(agent));
         }
     }
 
-    for (size_t station_id = 0; station_id < grid.stations.size(); station_id++)
+    for (size_t station_id = 0; station_id < station_count; station_id++)
     {
         if (!workstation_pressure_active(snapshot.station_pressure[station_id]))
             continue;
 
-        vector<pair<tuple<int, int, int, int>, int>> ranked_inbound;
-        ranked_inbound.reserve(inbound_by_station[station_id].size());
-        for (int agent : inbound_by_station[station_id])
+        workspace.ranked_inbound.clear();
+        workspace.ranked_inbound.reserve(
+            workspace.inbound_by_station[station_id].size());
+        for (int agent : workspace.inbound_by_station[station_id])
         {
-            ranked_inbound.emplace_back(
+            workspace.ranked_inbound.emplace_back(
                 pressure_key(
                     grid, static_cast<int>(station_id), agent,
                     agent_locations[agent], agent_contexts[agent]),
                 agent);
         }
-        std::sort(ranked_inbound.begin(), ranked_inbound.end(),
-                  [](const pair<tuple<int, int, int, int>, int>& lhs,
-                     const pair<tuple<int, int, int, int>, int>& rhs) {
-                      return lhs.first < rhs.first;
-                  });
-
         vector<int>& privileged =
             snapshot.privileged_inbound_agents[station_id];
         const size_t privileged_count = std::min(
-            ranked_inbound.size(),
+            workspace.ranked_inbound.size(),
             static_cast<size_t>(kWorkstationPrivilegedInboundCount));
+        std::partial_sort(
+            workspace.ranked_inbound.begin(),
+            workspace.ranked_inbound.begin() + privileged_count,
+            workspace.ranked_inbound.end(),
+            [](const pair<tuple<int, int, int, int>, int>& lhs,
+               const pair<tuple<int, int, int, int>, int>& rhs) {
+                return lhs.first < rhs.first;
+            });
         privileged.reserve(privileged_count);
         for (size_t index = 0; index < privileged_count; index++)
-            privileged.push_back(ranked_inbound[index].second);
+            privileged.push_back(workspace.ranked_inbound[index].second);
     }
-    return snapshot;
 }
 
 int workstation_pressure_action_cost(
@@ -182,9 +204,14 @@ WorkstationPressureBaseSnapshot evaluate_workstation_pressure_without_agent(
     for (vector<tuple<int, int, int, int>>& keys :
          snapshot.leading_inbound_keys)
     {
-        std::sort(keys.begin(), keys.end());
         if (keys.size() > static_cast<size_t>(kWorkstationPrivilegedInboundCount))
+        {
+            std::partial_sort(
+                keys.begin(),
+                keys.begin() + kWorkstationPrivilegedInboundCount,
+                keys.end());
             keys.resize(kWorkstationPrivilegedInboundCount);
+        }
     }
     return snapshot;
 }

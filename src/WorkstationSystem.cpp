@@ -1318,8 +1318,11 @@ void WorkstationSystem::simulate(int simulation_time)
             set_termination("invalid_execution", timestep);
             break;
         }
+        const int completed_services_before_window = completed_services;
         move_workstations();
-        bool traffic_jam = workstation_congested();
+        const bool traffic_jam = workstation_window_is_stalled(
+            workstation_congested(), completed_services_before_window,
+            completed_services);
         if (traffic_jam)
         {
             traffic_jam_episodes++;
@@ -1352,7 +1355,7 @@ void WorkstationSystem::save_results()
            << "station_policy: " << station_policy << std::endl
            << "pibt_policy: " << pibt_policy << std::endl
            << "stop_at_traffic_jam: " << (stop_at_traffic_jam ? 1 : 0) << std::endl
-           << "traffic_jam_rule: rhcr_majority_wait_full_execution_window" << std::endl
+           << "traffic_jam_rule: rhcr_majority_wait_full_execution_window_and_no_service_completion" << std::endl
            << "time_limit: " << time_limit << std::endl
            << "simulation_window: " << simulation_window << std::endl
            << "planning_window: " << planning_window << std::endl

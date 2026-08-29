@@ -4,6 +4,7 @@
 #include "WorkstationCommon.h"
 #include "WorkstationPolicy.h"
 
+#include <array>
 #include <cstdint>
 #include <ctime>
 #include <random>
@@ -85,6 +86,19 @@ private:
         float tie_breaker = 0;
     };
 
+    struct CandidateList
+    {
+        std::array<State, 5> states;
+        size_t size = 0;
+    };
+
+    struct StepRandomCacheEntry
+    {
+        bool valid = false;
+        uint64_t timestep = 0;
+        std::mt19937 engine;
+    };
+
     vector<Agent> agents;
     vector<int> occupied_now;
     vector<int> occupied_next;
@@ -95,8 +109,17 @@ private:
     vector<int> goal_indices;
     vector<int> last_goal_advance_timestep;
     vector<int> last_goal_advance_location;
+    vector<int> order_scratch;
+    vector<char> protected_class_scratch;
+    vector<State> next_states_scratch;
     WorkstationPressureSnapshot pressure_snapshot;
+    WorkstationPressureWorkspace pressure_workspace;
     vector<WorkstationAgentContext> pressure_contexts;
+    vector<int> pressure_locations_scratch;
+    vector<int> pressure_penalty_station;
+    vector<StepRandomCacheEntry> step_random_cache;
+    uint64_t step_random_cache_seed = 0;
+    bool step_random_cache_seed_valid = false;
     const WorkstationGrid* workstation_grid;
     std::mt19937 random_engine;
     int episode_start_timestep = 0;
@@ -109,7 +132,7 @@ private:
     void seed_step_random_engine(int local_t);
     bool plan_one_step(int local_t, vector<State>& current_states);
     bool func_pibt(int agent, int parent, int local_t);
-    vector<State> ranked_candidates(int agent, int local_t);
+    CandidateList ranked_candidates(int agent, int local_t);
     bool validate_step(const vector<State>& current_states,
                        const vector<State>& next_states) const;
 
@@ -122,7 +145,6 @@ private:
     bool violates_initial_constraint(int agent, int loc, int local_t) const;
 
     void update_pressure_state(const vector<State>& current_states);
-    int pressure_cost(int agent, int candidate_loc) const;
 
     void update_dynamic_priorities(const vector<State>& next_states, int local_t);
     void print_results() const;

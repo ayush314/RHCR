@@ -39,9 +39,9 @@ Pressure-Aware inherits Departure-Aware and adds workstation-local queue control
 
 1. Pressure activates at `P_s >= 3`, where `P_s` counts every agent physically
    occupying `Q_s`, regardless of assignment or task phase.
-2. Inbound agents are ordered by `(boundary seen, distance to service,
+2. Inbound agents are ordered by `(currently inside Q_s, distance to service,
    station-leg issue time, agent ID)`.
-3. The first `K=2` assigned `TO_STATION` agents are exempt from the pressure
+3. The first `K=4` assigned `TO_STATION` agents are exempt from the pressure
    cost. They receive no priority over `TO_EXIT` agents.
 4. Each nonprivileged assigned `TO_STATION` agent receives cost `lambda=2` for
    occupying `Q_s` while pressure is active. Foreign agents count toward
@@ -72,7 +72,7 @@ All reported runs request 1,000 steps with `w=20`, `h=5`, and `tau=3`.
 ### Compact Solver Transfer
 
 - Alley and Plaza; PBS and PIBT; Vanilla, Departure-Aware, and Pressure-Aware.
-- Pickup seed 1 and simulation seeds 6-25: 20 paired runs per condition.
+- Pickup seed 1 and untouched simulation seeds 26-45: 20 paired runs per condition.
 - PBS counts: Alley 20-80 by 10; Plaza 20-100 by 20.
 - PIBT counts: Alley 20-80 by 10 then 100-140 by 20; Plaza 20-120 by
   20 then 160-280 by 40.
@@ -97,7 +97,7 @@ claim is therefore limited to the frozen `tau=3` setting.
 The service-priority development ablation is stored under
 `results/departure_ablation/human_paired`. Paper-facing outcomes must be
 regenerated with the selected Departure-Aware parent and the fixed all-occupant
-`P_s`, `theta=3`, `K=2`, and `lambda=2` implementation.
+`P_s`, `theta=3`, `K=4`, and `lambda=2` implementation.
 
 ## Paper Structure
 

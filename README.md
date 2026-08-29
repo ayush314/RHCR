@@ -45,13 +45,13 @@ remain fixed by mandatory dwell without receiving solver priority. Agents
 assigned to station `s` in `TO_STATION` are ranked by:
 
 ```text
-(station boundary previously seen first,
+(currently inside the target queue first,
  distance to workstation,
  station-leg issue time,
  agent ID)
 ```
 
-The first two inbound agents are privileged (`K=2`). When pressure is active, every other inbound agent assigned to that station receives a soft occupancy cost of `2` for entering or remaining in `Q_s`. Agents assigned elsewhere can activate pressure by occupying the queue, but do not receive this cost.
+The first four inbound agents are privileged (`K=4`). When pressure is active, every other inbound agent assigned to that station receives a soft occupancy cost of `2` for entering or remaining in `Q_s`. Agents assigned elsewhere can activate pressure by occupying the queue, but do not receive this cost.
 
 At every projected step, both solvers evaluate pressure and privilege from the joint state at time `t`, then score candidate occupancy at time `t+1`. PBS applies the shared cost through an optional low-level transition-cost hook. PIBT applies it through one-step candidate ranking. Only executed task metadata persists between replans. The cost changes preference only and never removes a collision-free path or action. There is no adaptive `K`, foreign-agent cost, progress cost, exit bonus, ready-slot priority, separate pressure forecast, hard pruning, or pressure-specific fallback.
 
@@ -87,7 +87,7 @@ Paper runs use 1,000 requested simulation steps, `w=20`, `h=5`, `tau=3`, paired 
   --output results/example
 ```
 
-The publication workflow fixes `theta=3`, `K=2`, and `lambda=2` in the binary. First pretest and freeze the count ladders:
+The publication workflow fixes `theta=3`, `K=4`, and `lambda=2` in the binary. First pretest and freeze the count ladders:
 
 ```bash
 python3 scripts/run_publication.py \
@@ -110,18 +110,18 @@ ladders. Sortation final ladders contain eight equally spaced reportable counts
 plus the first all-method terminal or a separately marked physical-capacity
 terminal.
 
-Final human-centric seeds are `6-25`. Final sortation runs use pickup-layout seeds `2,3,4`, simulation seeds `6-10`, and pickup retention `5%,20%,100%` on Sortation Small, Medium, and Large. Generated sidecars are named `sortation_<size>_p<density>_layout<seed>.json`.
+Human-centric development uses seeds `1-25`; confirmatory runs use untouched seeds `26-45`. Final sortation runs use pickup-layout seeds `2,3,4`, simulation seeds `6-10`, and pickup retention `5%,20%,100%` on Sortation Small, Medium, and Large. Generated sidecars are named `sortation_<size>_p<density>_layout<seed>.json`.
 
 ## Failure And Metrics
 
-After each execution window, the public RHCR congestion rule stops a run when more than half the agents remained at the same location and orientation for that entire window. Solver failure, invalid LRA output, traffic jam, collision, and physical capacity are separate outcomes.
+After each execution window, a run stops for a traffic jam when more than half the agents remained at the same location and orientation for that entire window and no service completed during the window. Requiring both signals avoids classifying intentional admission control as a jam while still detecting a true no-service fixed point. Solver failure, invalid LRA output, traffic jam, collision, and physical capacity are separate outcomes.
 
 Paper runs pass a valid path prefix from a failed PBS or PIBT2 episode to the
 same RHCR LRA repair. The repair inserts waits for vertex contention and makes
 both agents wait on a proposed edge swap. A valid LRA slice counts as a
 recovered planning episode. An invalid repaired slice is a fallback failure,
-while a valid execution window that meets RHCR's majority-wait rule is a
-traffic jam.
+while a valid execution window with majority waiting and no completed service
+is a traffic jam.
 Post-solve commitment repair is disabled, so successful native plans are not
 modified externally. `--no-lra-fallback` remains available for native-failure
 ablations.

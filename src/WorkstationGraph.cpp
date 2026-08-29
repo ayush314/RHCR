@@ -155,6 +155,7 @@ bool WorkstationGrid::load_map(string fname)
         cols = root.get<int>("cols");
         set_cardinal_weights(*this);
     }
+    zone_cell_to_station_dense.assign(size(), -1);
 
     for (const auto& child : root.get_child("pickup_endpoints"))
     {
@@ -173,6 +174,7 @@ bool WorkstationGrid::load_map(string fname)
         station.zone_cells.insert(station.workstation);
         workstation_to_station[station.workstation] = station.station_id;
         zone_cell_to_station[station.workstation] = station.station_id;
+        zone_cell_to_station_dense[station.workstation] = station.station_id;
         types[station.workstation] = "Workstation";
 
         for (const auto& child : station_node.get_child("standby_cells"))
@@ -181,6 +183,7 @@ bool WorkstationGrid::load_map(string fname)
             station.standby_cells.push_back(loc);
             station.zone_cells.insert(loc);
             zone_cell_to_station[loc] = station.station_id;
+            zone_cell_to_station_dense[loc] = station.station_id;
             types[loc] = "Standby";
         }
         for (const auto& child : station_node.get_child("buffer_cells"))
@@ -189,6 +192,7 @@ bool WorkstationGrid::load_map(string fname)
             station.buffer_cells.push_back(loc);
             station.zone_cells.insert(loc);
             zone_cell_to_station[loc] = station.station_id;
+            zone_cell_to_station_dense[loc] = station.station_id;
             types[loc] = "Buffer";
         }
         for (const auto& child : station_node.get_child("approach_cells"))
@@ -197,6 +201,7 @@ bool WorkstationGrid::load_map(string fname)
             station.approach_cells.push_back(loc);
             station.zone_cells.insert(loc);
             zone_cell_to_station[loc] = station.station_id;
+            zone_cell_to_station_dense[loc] = station.station_id;
             types[loc] = "Approach";
         }
         for (const auto& child : station_node.get_child("exit_cells"))
@@ -206,6 +211,7 @@ bool WorkstationGrid::load_map(string fname)
             station.zone_cells.insert(loc);
             exit_to_station[loc] = station.station_id;
             zone_cell_to_station[loc] = station.station_id;
+            zone_cell_to_station_dense[loc] = station.station_id;
             types[loc] = "Exit";
         }
 
@@ -454,6 +460,11 @@ int WorkstationGrid::station_for_exit(int loc) const
 
 int WorkstationGrid::station_for_zone_cell(int loc) const
 {
+    if (zone_index_complete && loc >= 0 &&
+        loc < static_cast<int>(zone_cell_to_station_dense.size()))
+    {
+        return zone_cell_to_station_dense[loc];
+    }
     auto it = zone_cell_to_station.find(loc);
     return it == zone_cell_to_station.end() ? -1 : it->second;
 }

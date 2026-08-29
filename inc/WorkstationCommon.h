@@ -37,8 +37,17 @@ inline WorkstationAgentContext workstation_context_for_goal(
 }
 
 constexpr int kWorkstationPressureThreshold = 3;
-constexpr int kWorkstationPrivilegedInboundCount = 2;
+constexpr int kWorkstationPrivilegedInboundCount = 4;
 constexpr int kWorkstationPressureQueueCost = 2;
+
+inline bool workstation_window_is_stalled(
+    bool majority_waited,
+    int completed_services_before,
+    int completed_services_after)
+{
+    return majority_waited &&
+        completed_services_after == completed_services_before;
+}
 
 inline bool is_valid_workstation_policy(const std::string& policy)
 {
@@ -123,9 +132,9 @@ inline int count_workstation_pressure(int num_agents, OccupiesQueue occupies_que
 }
 
 inline std::tuple<int, int, int, int> workstation_privilege_key(
-    bool boundary_seen, int distance, int station_leg_issue_time, int agent_id)
+    bool inside_target_queue, int distance, int station_leg_issue_time, int agent_id)
 {
-    return std::make_tuple(boundary_seen ? 0 : 1, distance,
+    return std::make_tuple(inside_target_queue ? 0 : 1, distance,
                            station_leg_issue_time, agent_id);
 }
 

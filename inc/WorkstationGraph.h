@@ -50,6 +50,7 @@ private:
     unordered_map<int, int> workstation_to_station;
     unordered_map<int, int> exit_to_station;
     unordered_map<int, int> zone_cell_to_station;
+    vector<int> zone_cell_to_station_dense;
     bool zone_index_complete = false;
     string movingai_map_path;
     void* compact_mapping = nullptr;
