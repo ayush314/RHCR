@@ -10,7 +10,7 @@ constexpr int kMissingPriorityValue = std::numeric_limits<int>::max() / 4;
 int station_for_location(const WorkstationGrid& grid, int location)
 {
     int station_id = grid.station_for_zone_cell(location);
-    if (station_id >= 0)
+    if (station_id >= 0 || grid.has_complete_zone_index())
         return station_id;
     for (size_t candidate = 0; candidate < grid.stations.size(); candidate++)
     {
@@ -79,15 +79,30 @@ WorkstationPressureSnapshot evaluate_workstation_pressure(
         if (!workstation_pressure_active(snapshot.station_pressure[station_id]))
             continue;
 
-        snapshot.privileged_inbound_agents[station_id] =
-            select_workstation_privileged_agents(
-                inbound_by_station[station_id],
-                [&](int agent) {
-                    const WorkstationAgentContext& context = agent_contexts[agent];
-                    return pressure_key(
-                        grid, static_cast<int>(station_id), agent,
-                        agent_locations[agent], context);
-                });
+        vector<pair<tuple<int, int, int, int>, int>> ranked_inbound;
+        ranked_inbound.reserve(inbound_by_station[station_id].size());
+        for (int agent : inbound_by_station[station_id])
+        {
+            ranked_inbound.emplace_back(
+                pressure_key(
+                    grid, static_cast<int>(station_id), agent,
+                    agent_locations[agent], agent_contexts[agent]),
+                agent);
+        }
+        std::sort(ranked_inbound.begin(), ranked_inbound.end(),
+                  [](const pair<tuple<int, int, int, int>, int>& lhs,
+                     const pair<tuple<int, int, int, int>, int>& rhs) {
+                      return lhs.first < rhs.first;
+                  });
+
+        vector<int>& privileged =
+            snapshot.privileged_inbound_agents[station_id];
+        const size_t privileged_count = std::min(
+            ranked_inbound.size(),
+            static_cast<size_t>(kWorkstationPrivilegedInboundCount));
+        privileged.reserve(privileged_count);
+        for (size_t index = 0; index < privileged_count; index++)
+            privileged.push_back(ranked_inbound[index].second);
     }
     return snapshot;
 }

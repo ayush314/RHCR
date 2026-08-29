@@ -8,6 +8,8 @@
 #include <ctime>
 #include <random>
 
+class WorkstationGrid;
+
 // RHCR adapter for Kei18/pibt2. The canonical PIBT priority, preference,
 // inheritance, and backtracking behavior is retained in the vanilla policy.
 class PIBT2 : public MAPFSolver
@@ -37,7 +39,7 @@ public:
     void save_constraints_in_goal_node(const string&) const {}
     void clear();
 
-    void set_pibt_policy(const string& policy) { pibt_policy = policy; }
+    void set_pibt_policy(const string& policy);
     void set_episode_start_timestep(int timestep)
     {
         episode_start_timestep = timestep;
@@ -95,9 +97,11 @@ private:
     vector<int> last_goal_advance_location;
     WorkstationPressureSnapshot pressure_snapshot;
     vector<WorkstationAgentContext> pressure_contexts;
+    const WorkstationGrid* workstation_grid;
     std::mt19937 random_engine;
     int episode_start_timestep = 0;
     std::clock_t run_start = 0;
+    Policy selected_policy = Policy::VANILLA;
 
     Policy active_policy() const;
     bool departure_protected(int agent) const;

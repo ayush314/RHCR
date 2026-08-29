@@ -37,6 +37,7 @@ public:
     int station_for_workstation(int loc) const;
     int station_for_exit(int loc) const;
     int station_for_zone_cell(int loc) const;
+    bool has_complete_zone_index() const { return zone_index_complete; }
     bool conflict_in_station_microzone(int station_id, int v1, int v2) const;
 
     int choose_exit_for_endpoint(int station_id, int endpoint_loc) const;
@@ -49,6 +50,7 @@ private:
     unordered_map<int, int> workstation_to_station;
     unordered_map<int, int> exit_to_station;
     unordered_map<int, int> zone_cell_to_station;
+    bool zone_index_complete = false;
     string movingai_map_path;
     void* compact_mapping = nullptr;
     size_t compact_mapping_size = 0;

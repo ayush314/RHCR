@@ -22,15 +22,24 @@ constexpr int kMissingDistance = std::numeric_limits<int>::max() / 4;
 } // namespace
 
 PIBT2::PIBT2(const BasicGraph& G, SingleAgentSolver& path_planner) :
-    MAPFSolver(G, path_planner), random_engine(0) {}
+    MAPFSolver(G, path_planner),
+    workstation_grid(dynamic_cast<const WorkstationGrid*>(&G)),
+    random_engine(0) {}
+
+void PIBT2::set_pibt_policy(const string& policy)
+{
+    pibt_policy = policy;
+    if (policy == "departure_aware")
+        selected_policy = Policy::DEPARTURE_AWARE;
+    else if (policy == "pressure_aware")
+        selected_policy = Policy::PRESSURE_AWARE;
+    else
+        selected_policy = Policy::VANILLA;
+}
 
 PIBT2::Policy PIBT2::active_policy() const
 {
-    if (pibt_policy == "departure_aware")
-        return Policy::DEPARTURE_AWARE;
-    if (pibt_policy == "pressure_aware")
-        return Policy::PRESSURE_AWARE;
-    return Policy::VANILLA;
+    return selected_policy;
 }
 
 void PIBT2::clear()
@@ -166,7 +175,6 @@ int PIBT2::distance_between(int from, int to) const
 {
     if (from < 0 || to < 0)
         return kMissingDistance;
-    const auto* workstation_grid = dynamic_cast<const WorkstationGrid*>(&G);
     if (workstation_grid != nullptr)
         return workstation_grid->distance_between(from, to);
     const auto heuristic = G.heuristics.find(to);
@@ -193,8 +201,7 @@ void PIBT2::update_pressure_state(const vector<State>& current_states)
     pressure_contexts.clear();
     if (active_policy() != Policy::PRESSURE_AWARE)
         return;
-    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
-    if (grid == nullptr)
+    if (workstation_grid == nullptr)
         return;
 
     vector<int> locations;
@@ -206,27 +213,27 @@ void PIBT2::update_pressure_state(const vector<State>& current_states)
         pressure_contexts.push_back(active_context(agent));
     }
     pressure_snapshot = evaluate_workstation_pressure(
-        *grid, locations, pressure_contexts);
+        *workstation_grid, locations, pressure_contexts);
 }
 
 int PIBT2::pressure_cost(int agent, int candidate_loc) const
 {
     if (active_policy() != Policy::PRESSURE_AWARE)
         return 0;
-    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
-    if (grid == nullptr || agent < 0 || agent >= (int)workstation_context.size())
+    if (workstation_grid == nullptr ||
+        agent < 0 || agent >= (int)workstation_context.size())
         return 0;
 
     return workstation_pressure_action_cost(
-        *grid, pressure_snapshot, pressure_contexts, agent, candidate_loc);
+        *workstation_grid, pressure_snapshot, pressure_contexts,
+        agent, candidate_loc);
 }
 
 bool PIBT2::must_hold_for_workstation_service(int agent, const State& state) const
 {
     if (agent < 0 || agent >= (int)workstation_context.size())
         return false;
-    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
-    if (grid == nullptr)
+    if (workstation_grid == nullptr)
         return false;
 
     const WorkstationAgentContext context = active_context(agent);
@@ -235,9 +242,11 @@ bool PIBT2::must_hold_for_workstation_service(int agent, const State& state) con
     {
         return false;
     }
-    if (context.station_id < 0 || context.station_id >= (int)grid->stations.size())
+    if (context.station_id < 0 ||
+        context.station_id >= (int)workstation_grid->stations.size())
         return false;
-    if (state.location != grid->stations[context.station_id].workstation)
+    if (state.location !=
+        workstation_grid->stations[context.station_id].workstation)
         return false;
 
     const int target = current_target(agent);
@@ -298,44 +307,64 @@ vector<State> PIBT2::ranked_candidates(int agent, int local_t)
             return lhs.orientation < rhs.orientation;
         });
 
-    auto canonical_less = [&](const State& lhs, const State& rhs) {
-        const int lhs_distance = distance_to_target(agent, lhs.location);
-        const int rhs_distance = distance_to_target(agent, rhs.location);
-        if (lhs_distance != rhs_distance)
-            return lhs_distance < rhs_distance;
-        const bool lhs_occupied = occupied_now[lhs.location] >= 0;
-        const bool rhs_occupied = occupied_now[rhs.location] >= 0;
-        if (lhs_occupied != rhs_occupied)
-            return !lhs_occupied;
+    struct RankedCandidate
+    {
+        State state;
+        int distance;
+        long long policy_score;
+        bool occupied;
+    };
+    const bool pressure_aware = active_policy() == Policy::PRESSURE_AWARE;
+    vector<RankedCandidate> ranked;
+    ranked.reserve(candidates.size());
+    for (const State& candidate : candidates)
+    {
+        const int distance = distance_to_target(agent, candidate.location);
+        const int cost = pressure_aware ?
+            pressure_cost(agent, candidate.location) : 0;
+        ranked.push_back({
+            candidate,
+            distance,
+            static_cast<long long>(distance) + cost,
+            occupied_now[candidate.location] >= 0,
+        });
+    }
+
+    auto canonical_less = [](const RankedCandidate& lhs,
+                             const RankedCandidate& rhs) {
+        if (lhs.distance != rhs.distance)
+            return lhs.distance < rhs.distance;
+        if (lhs.occupied != rhs.occupied)
+            return !lhs.occupied;
         return false;
     };
-    auto policy_less = [&](const State& lhs, const State& rhs) {
-        const long long lhs_distance = static_cast<long long>(
-            distance_to_target(agent, lhs.location)) + pressure_cost(agent, lhs.location);
-        const long long rhs_distance = static_cast<long long>(
-            distance_to_target(agent, rhs.location)) + pressure_cost(agent, rhs.location);
-        if (lhs_distance != rhs_distance)
-            return lhs_distance < rhs_distance;
-        const bool lhs_occupied = occupied_now[lhs.location] >= 0;
-        const bool rhs_occupied = occupied_now[rhs.location] >= 0;
-        if (lhs_occupied != rhs_occupied)
-            return !lhs_occupied;
+    auto policy_less = [](const RankedCandidate& lhs,
+                          const RankedCandidate& rhs) {
+        if (lhs.policy_score != rhs.policy_score)
+            return lhs.policy_score < rhs.policy_score;
+        if (lhs.occupied != rhs.occupied)
+            return !lhs.occupied;
         return false;
     };
 
-    if (active_policy() != Policy::PRESSURE_AWARE)
+    if (!pressure_aware)
     {
-        std::sort(candidates.begin(), candidates.end(), canonical_less);
+        std::sort(ranked.begin(), ranked.end(), canonical_less);
+        for (size_t index = 0; index < ranked.size(); index++)
+            candidates[index] = ranked[index].state;
         return candidates;
     }
 
-    const State canonical_front = *std::min_element(
-        candidates.begin(), candidates.end(), canonical_less);
-    std::sort(candidates.begin(), candidates.end(), policy_less);
-    if (!candidates.empty() && canonical_front.location != candidates.front().location)
+    const RankedCandidate canonical_front = *std::min_element(
+        ranked.begin(), ranked.end(), canonical_less);
+    std::sort(ranked.begin(), ranked.end(), policy_less);
+    if (!ranked.empty() &&
+        canonical_front.state.location != ranked.front().state.location)
     {
         pressure_rank_changes++;
     }
+    for (size_t index = 0; index < ranked.size(); index++)
+        candidates[index] = ranked[index].state;
     return candidates;
 }
 

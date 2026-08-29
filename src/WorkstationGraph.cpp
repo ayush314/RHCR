@@ -119,6 +119,7 @@ WorkstationGrid::~WorkstationGrid()
 
 bool WorkstationGrid::load_map(string fname)
 {
+    zone_index_complete = false;
     std::ifstream stream(fname.c_str());
     if (!stream.is_open())
     {
@@ -210,6 +211,7 @@ bool WorkstationGrid::load_map(string fname)
 
         stations.push_back(station);
     }
+    zone_index_complete = true;
 
     unordered_set<int> reserved = endpoint_set;
     for (const auto& station : stations)
