@@ -37,8 +37,11 @@ inline WorkstationAgentContext workstation_context_for_goal(
 }
 
 constexpr int kWorkstationPressureThreshold = 3;
-constexpr int kWorkstationPrivilegedInboundCount = 4;
+constexpr int kWorkstationPrivilegedInboundCount = 2;
 constexpr int kWorkstationPressureQueueCost = 2;
+
+int workstation_pressure_threshold();
+void set_workstation_pressure_threshold(int threshold);
 
 inline bool workstation_window_is_stalled(
     bool majority_waited,
@@ -51,8 +54,8 @@ inline bool workstation_window_is_stalled(
 
 inline bool is_valid_workstation_policy(const std::string& policy)
 {
-    return policy == "vanilla" || policy == "departure_aware" ||
-           policy == "pressure_aware";
+    return policy == "vanilla" || policy == "lead_aware" ||
+           policy == "departure_aware" || policy == "pressure_aware";
 }
 
 inline bool is_pressure_aware_policy(const std::string& policy)
@@ -62,7 +65,12 @@ inline bool is_pressure_aware_policy(const std::string& policy)
 
 inline bool uses_workstation_departure_priority(const std::string& policy)
 {
-    return policy == "departure_aware" || policy == "pressure_aware";
+    return is_valid_workstation_policy(policy);
+}
+
+inline bool uses_workstation_lead_priority(const std::string& policy)
+{
+    return policy == "lead_aware" || policy == "pressure_aware";
 }
 
 inline bool workstation_policy_protects_phase(
@@ -116,7 +124,7 @@ inline bool workstation_mandatory_dwell_preferred_priority(
 
 inline bool workstation_pressure_active(int pressure)
 {
-    return pressure >= kWorkstationPressureThreshold;
+    return pressure >= workstation_pressure_threshold();
 }
 
 template<typename OccupiesQueue>
@@ -140,11 +148,13 @@ inline std::tuple<int, int, int, int> workstation_privilege_key(
 
 template<typename KeyFunction>
 inline std::vector<int> select_workstation_privileged_agents(
-    std::vector<int> inbound_agents, KeyFunction key)
+    std::vector<int> inbound_agents, KeyFunction key,
+    int privileged_inbound_count = kWorkstationPrivilegedInboundCount)
 {
     std::sort(inbound_agents.begin(), inbound_agents.end(),
               [&](int lhs, int rhs) { return key(lhs) < key(rhs); });
-    if ((int)inbound_agents.size() > kWorkstationPrivilegedInboundCount)
-        inbound_agents.resize(kWorkstationPrivilegedInboundCount);
+    const int privilege_limit = std::max(0, privileged_inbound_count);
+    if ((int)inbound_agents.size() > privilege_limit)
+        inbound_agents.resize(privilege_limit);
     return inbound_agents;
 }

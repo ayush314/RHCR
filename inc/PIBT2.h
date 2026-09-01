@@ -17,6 +17,8 @@ class PIBT2 : public MAPFSolver
 {
 public:
     string pibt_policy = "vanilla";
+    int pressure_privileged_inbound_count =
+        kWorkstationPrivilegedInboundCount;
     bool random_tiebreak = true;
     uint64_t tie_seed = 0;
     vector<WorkstationAgentContext> workstation_context;
@@ -71,6 +73,7 @@ private:
     enum class Policy
     {
         VANILLA,
+        LEAD_AWARE,
         DEPARTURE_AWARE,
         PRESSURE_AWARE,
     };
@@ -111,12 +114,16 @@ private:
     vector<int> last_goal_advance_location;
     vector<int> order_scratch;
     vector<char> protected_class_scratch;
+    vector<char> pressure_privileged_scratch;
+    vector<char> pressure_priority_scratch;
+    vector<char> lead_tiebreak_scratch;
     vector<State> next_states_scratch;
     WorkstationPressureSnapshot pressure_snapshot;
     WorkstationPressureWorkspace pressure_workspace;
     vector<WorkstationAgentContext> pressure_contexts;
     vector<int> pressure_locations_scratch;
     vector<int> pressure_penalty_station;
+    vector<int> lead_agent_by_station;
     vector<StepRandomCacheEntry> step_random_cache;
     uint64_t step_random_cache_seed = 0;
     bool step_random_cache_seed_valid = false;
@@ -128,6 +135,9 @@ private:
 
     Policy active_policy() const;
     bool departure_protected(int agent) const;
+    bool lead_protected(int agent) const;
+    bool lead_queue_tiebreak_active(int agent, const State& state) const;
+    bool pressure_priority_active(int agent, const State& state) const;
     bool initialize_run_state();
     void seed_step_random_engine(int local_t);
     bool plan_one_step(int local_t, vector<State>& current_states);
@@ -144,7 +154,7 @@ private:
     bool must_hold_for_workstation_service(int agent, const State& state) const;
     bool violates_initial_constraint(int agent, int loc, int local_t) const;
 
-    void update_pressure_state(const vector<State>& current_states);
+    void update_workstation_policy_state(const vector<State>& current_states);
 
     void update_dynamic_priorities(const vector<State>& next_states, int local_t);
     void print_results() const;

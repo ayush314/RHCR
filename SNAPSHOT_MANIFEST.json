@@ -1,0 +1,53 @@
+{
+  "snapshot_name": "sortation-p20-pre-plaza-throughput",
+  "archive_branch": "archive/sortation-p20-pre-plaza-throughput",
+  "base_git_commit": "33ba5489e35ab66ef496a418f961c787477de863",
+  "historical_source_git_dirty": true,
+  "historical_binary_sha256": "e94e954bb3b5796902735dc0f001f87b44f60fb7d374926109904f58b0996f30",
+  "reconstructed_binary_sha256": "e7d94f73de8dafc9d41410e50fe102d574d2e61305e3d4259325f0d19ae6712c",
+  "historical_result_root": "results/final_sortation_p20_pressure_lead_right_of_way",
+  "behavioral_reconstruction": true,
+  "methods": [
+    "vanilla",
+    "lead_aware",
+    "pressure_aware"
+  ],
+  "pbs_solver": "PBS",
+  "pibt_solver": "PIBT2",
+  "pressure": {
+    "population": "all_agents_in_queue_region",
+    "threshold": 3,
+    "privileged_inbound_count": 2,
+    "queue_cost": 2,
+    "queue_cost_scope": "each_planned_zone_occupancy",
+    "right_of_way": "top_ranked_lead_only",
+    "right_of_way_count_per_station": 1,
+    "privilege_key": [
+      "inside_target_queue",
+      "distance_to_workstation",
+      "station_leg_issue_time",
+      "agent_id"
+    ]
+  },
+  "shared_framework": {
+    "mandatory_service_dwell": true,
+    "service_to_exit_required": true,
+    "to_exit_priority_all_methods": true,
+    "lra_fallback_enabled": true,
+    "lra_edge_swap_policy": "both_wait"
+  },
+  "excluded_later_prototypes": [
+    "k_wide_right_of_way",
+    "entry_only_pressure_cost",
+    "alternative_theta",
+    "alternative_k",
+    "plaza_throughput_prototypes"
+  ],
+  "verification": [
+    "lifelong build",
+    "workstation policy tests",
+    "31 result-accounting tests",
+    "PIBT2 pressure-aware Alley smoke run",
+    "PBS pressure-aware Alley smoke run"
+  ]
+}

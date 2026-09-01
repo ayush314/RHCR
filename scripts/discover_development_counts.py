@@ -11,21 +11,21 @@ from discover_publication_ladders import classify_terminal
 
 
 CONDITIONS = {
-    "alley": {"start": 20, "resolution": 10, "methods": ("pbs_departure_aware", "pibt_departure_aware")},
-    "plaza": {"start": 40, "resolution": 20, "methods": ("pbs_departure_aware", "pibt_departure_aware")},
-    "sortation_medium_p20": {"start": 500, "resolution": 100, "methods": ("pibt_departure_aware",)},
+    "alley": {"start": 20, "resolution": 10, "methods": ("pbs_lead_aware", "pibt_lead_aware")},
+    "plaza": {"start": 40, "resolution": 20, "methods": ("pbs_lead_aware", "pibt_lead_aware")},
+    "sortation_medium_p20": {"start": 500, "resolution": 100, "methods": ("pibt_lead_aware",)},
 }
 
 
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
-    parser = argparse.ArgumentParser(description="Pretest Departure-Aware boundaries for final experiment ladders.")
+    parser = argparse.ArgumentParser(description="Pretest Lead-Aware boundaries for final experiment ladders.")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--binary", default=str(repo / "lifelong"))
     parser.add_argument("--jobs", type=int, default=6)
-    parser.add_argument("--process-timeout", type=int, default=1800)
+    parser.add_argument("--process-timeout", type=int, default=600)
     parser.add_argument(
         "--conditions", default=",".join(CONDITIONS),
         help="Comma-separated development conditions to probe.",
@@ -122,8 +122,8 @@ def main() -> int:
         if condition not in active_conditions:
             continue
         human = config["human"]
-        pbs_boundary = config["development_boundaries"][condition]["pbs_departure_aware"]
-        pibt_boundary = config["development_boundaries"][condition]["pibt_departure_aware"]
+        pbs_boundary = config["development_boundaries"][condition]["pbs_lead_aware"]
+        pibt_boundary = config["development_boundaries"][condition]["pibt_lead_aware"]
         common = sorted(set(human["common"][condition]) | set(pbs_boundary["selected_counts"]))
         extended = sorted(
             count for count in

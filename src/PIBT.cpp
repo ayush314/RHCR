@@ -29,6 +29,8 @@ PIBT::PIBT(const BasicGraph& G, SingleAgentSolver& path_planner) :
 
 PIBT::Policy PIBT::active_policy() const
 {
+    if (pibt_policy == "lead_aware")
+        return Policy::LEAD_AWARE;
     if (pibt_policy == "departure_aware")
         return Policy::DEPARTURE_AWARE;
     if (pibt_policy == "pressure_aware")
@@ -39,6 +41,33 @@ PIBT::Policy PIBT::active_policy() const
 bool PIBT::use_departure_priority() const
 {
     return uses_workstation_departure_priority(pibt_policy);
+}
+
+bool PIBT::use_lead_priority() const
+{
+    return uses_workstation_lead_priority(pibt_policy);
+}
+
+bool PIBT::lead_protected(int agent) const
+{
+    if (agent < 0 || agent >= static_cast<int>(pressure_contexts.size()))
+        return false;
+    const WorkstationAgentContext& context = pressure_contexts[agent];
+    return context.phase == WorkstationAgentPhase::TO_STATION &&
+        context.station_id >= 0 &&
+        context.station_id < static_cast<int>(lead_agent_by_station.size()) &&
+        lead_agent_by_station[context.station_id] == agent;
+}
+
+bool PIBT::lead_queue_tiebreak_active(int agent, const State& state) const
+{
+    if (!lead_protected(agent))
+        return false;
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    if (grid == nullptr)
+        return false;
+    return workstation_state_or_action_touches_station_zone(
+        *grid, pressure_contexts[agent].station_id, state);
 }
 
 int PIBT::step_assignment_budget() const
@@ -73,11 +102,12 @@ void PIBT::initialize_run_state()
         solution[i].push_back(starts[i]);
 }
 
-void PIBT::update_pressure_state(const vector<State>& current_states)
+void PIBT::update_workstation_policy_state(const vector<State>& current_states)
 {
     pressure_snapshot = WorkstationPressureSnapshot();
     pressure_contexts.clear();
-    if (active_policy() != Policy::PRESSURE_AWARE)
+    lead_agent_by_station.clear();
+    if (!use_lead_priority() && active_policy() != Policy::PRESSURE_AWARE)
         return;
     const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
     if (grid == nullptr)
@@ -91,8 +121,14 @@ void PIBT::update_pressure_state(const vector<State>& current_states)
         locations.push_back(current_states[agent].location);
         pressure_contexts.push_back(active_context(agent));
     }
-    pressure_snapshot = evaluate_workstation_pressure(
+    lead_agent_by_station = evaluate_workstation_lead_agents(
         *grid, locations, pressure_contexts);
+    if (active_policy() == Policy::PRESSURE_AWARE)
+    {
+        pressure_snapshot = evaluate_workstation_pressure(
+            *grid, locations, pressure_contexts,
+            pressure_privileged_inbound_count);
+    }
 }
 
 void PIBT::advance_goal_index(int agent, const State& state, int local_t)
@@ -540,6 +576,12 @@ bool PIBT::assignment_pass(int local_t,
         }
         if (priority_age[lhs] != priority_age[rhs])
             return priority_age[lhs] > priority_age[rhs];
+        const bool lhs_lead_tiebreak = use_lead_priority() &&
+            lead_queue_tiebreak_active(lhs, current_states[lhs]);
+        const bool rhs_lead_tiebreak = use_lead_priority() &&
+            lead_queue_tiebreak_active(rhs, current_states[rhs]);
+        if (lhs_lead_tiebreak != rhs_lead_tiebreak)
+            return lhs_lead_tiebreak;
         return lhs < rhs;
     });
 
@@ -578,7 +620,7 @@ bool PIBT::plan_one_step(int local_t, vector<State>& current_states)
 {
     for (int agent = 0; agent < num_of_agents; agent++)
         advance_goal_index(agent, current_states[agent], local_t - 1);
-    update_pressure_state(current_states);
+    update_workstation_policy_state(current_states);
     vector<State> next_states;
     assignment_pass_index = 0;
     if (!assignment_pass(local_t, current_states, next_states, true))

@@ -11,6 +11,8 @@ class PIBT : public MAPFSolver
 {
 public:
     string pibt_policy = "vanilla";
+    int pressure_privileged_inbound_count =
+        kWorkstationPrivilegedInboundCount;
     bool random_tiebreak = true;
     uint64_t tie_seed = 0;
     vector<WorkstationAgentContext> workstation_context;
@@ -44,6 +46,7 @@ private:
     enum class Policy
     {
         VANILLA,
+        LEAD_AWARE,
         DEPARTURE_AWARE,
         PRESSURE_AWARE,
     };
@@ -64,16 +67,20 @@ private:
     vector<int> last_goal_advance_location;
     WorkstationPressureSnapshot pressure_snapshot;
     vector<WorkstationAgentContext> pressure_contexts;
+    vector<int> lead_agent_by_station;
     std::clock_t run_start = 0;
     int remaining_assignment_budget = 0;
     int assignment_pass_index = 0;
 
     Policy active_policy() const;
     bool use_departure_priority() const;
+    bool use_lead_priority() const;
+    bool lead_protected(int agent) const;
+    bool lead_queue_tiebreak_active(int agent, const State& state) const;
     int step_assignment_budget() const;
 
     void initialize_run_state();
-    void update_pressure_state(const vector<State>& current_states);
+    void update_workstation_policy_state(const vector<State>& current_states);
 
     void advance_goal_index(int agent, const State& state, int local_t);
     int current_target(int agent) const;

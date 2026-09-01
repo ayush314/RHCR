@@ -10,7 +10,7 @@ from pathlib import Path
 import run_comparison
 
 
-METHODS = ("pibt_vanilla", "pibt_departure_aware", "pibt_pressure_aware")
+METHODS = ("pibt_vanilla", "pibt_lead_aware", "pibt_pressure_aware")
 STARTS = {"small": 50, "medium": 500, "large": 2000}
 RESOLUTION = {"small": 10, "medium": 100, "large": 500}
 
@@ -61,7 +61,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--binary", default=str(repo / "lifelong"))
     parser.add_argument("--jobs", type=int, default=6)
-    parser.add_argument("--process-timeout", type=int, default=1800)
+    parser.add_argument("--process-timeout", type=int, default=600)
     parser.add_argument("--maps", default="small,medium,large")
     parser.add_argument("--densities", default="5,20,100")
     parser.add_argument("--force", action="store_true")

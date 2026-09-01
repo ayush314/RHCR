@@ -1,0 +1,276 @@
+{
+  "benchmark_fingerprints": {
+    "lorr_sortation_large_p20": {
+      "sortation_large.map": "edc993b6a9882f26c74810a8d31568bb4d175518d833fd41eedbfb8cdcfd115b",
+      "sortation_large_p20_layout3.json": "e064d8354f85c8c2b003cf4f63549eea1688347dbc382e3b3deb9c1c28e65ab0"
+    },
+    "lorr_sortation_medium_p20": {
+      "sortation_medium.map": "6bccecb01bd6a7c21888fca2e57dd3cc0ff88fda910a1df22fda71c0bd3c1f0b",
+      "sortation_medium_p20_layout3.json": "933c3a4202b75ee9fc0c6290568765e043a04540b1a5de019addb2adb4c32273"
+    },
+    "lorr_sortation_small_p20": {
+      "sortation_small.map": "686d810cf2eb8cab83894af390eb5c5d0f2960b8c84e52176841583740a3c96f",
+      "sortation_small_p20_layout3.json": "79416fc3279ff5826ebe5ce7c9a2a8d2cae5b61326f66329b130ba3e89660afb"
+    }
+  },
+  "binary": "/home/aav/dockmapf_transfer/pressure-aware-pbs/lifelong",
+  "binary_sha256": "e94e954bb3b5796902735dc0f001f87b44f60fb7d374926109904f58b0996f30",
+  "commitment_repair": false,
+  "continue_on_traffic_jam": false,
+  "cutoff_time": 60,
+  "evaluated_grids": {
+    "lorr_sortation_large_p20": [
+      2100,
+      4200,
+      6300,
+      8400,
+      10500,
+      12600
+    ],
+    "lorr_sortation_medium_p20": [
+      850,
+      1700,
+      2550,
+      3400,
+      4250,
+      5100,
+      5950,
+      6800,
+      7650,
+      8500,
+      9350,
+      10200,
+      11050,
+      11900,
+      12750,
+      13600
+    ],
+    "lorr_sortation_small_p20": [
+      50,
+      100,
+      150,
+      200,
+      250,
+      300,
+      350,
+      400,
+      450,
+      500,
+      550,
+      600,
+      650,
+      700,
+      750,
+      800,
+      850,
+      900,
+      950,
+      1000
+    ]
+  },
+  "evaluated_method_grids": {
+    "lorr_sortation_large_p20": {
+      "pibt_pressure_aware": [
+        2100,
+        4200,
+        6300,
+        8400,
+        10500,
+        12600
+      ]
+    },
+    "lorr_sortation_medium_p20": {
+      "pibt_pressure_aware": [
+        850,
+        1700,
+        2550,
+        3400,
+        4250,
+        5100,
+        5950,
+        6800,
+        7650,
+        8500,
+        9350,
+        10200,
+        11050,
+        11900,
+        12750,
+        13600
+      ]
+    },
+    "lorr_sortation_small_p20": {
+      "pibt_pressure_aware": [
+        50,
+        100,
+        150,
+        200,
+        250,
+        300,
+        350,
+        400,
+        450,
+        500,
+        550,
+        600,
+        650,
+        700,
+        750,
+        800,
+        850,
+        900,
+        950,
+        1000
+      ]
+    }
+  },
+  "grids": {
+    "lorr_sortation_large_p20": [
+      2100,
+      4200,
+      6300,
+      8400,
+      10500,
+      12600,
+      14700,
+      16800,
+      18900,
+      21000,
+      23100,
+      25200,
+      27300,
+      29400,
+      31500,
+      33600,
+      35700,
+      37800,
+      39900,
+      42000
+    ],
+    "lorr_sortation_medium_p20": [
+      850,
+      1700,
+      2550,
+      3400,
+      4250,
+      5100,
+      5950,
+      6800,
+      7650,
+      8500,
+      9350,
+      10200,
+      11050,
+      11900,
+      12750,
+      13600,
+      14450,
+      15300,
+      16150,
+      17000
+    ],
+    "lorr_sortation_small_p20": [
+      50,
+      100,
+      150,
+      200,
+      250,
+      300,
+      350,
+      400,
+      450,
+      500,
+      550,
+      600,
+      650,
+      700,
+      750,
+      800,
+      850,
+      900,
+      950,
+      1000
+    ]
+  },
+  "human_count_ladder": {
+    "points": null,
+    "rule": "explicit",
+    "start": null,
+    "valid_start_capacity": {
+      "alley": 158,
+      "plaza": 288
+    }
+  },
+  "jobs": 5,
+  "keep_paths": false,
+  "lead_aware_priority_count_per_station": 1,
+  "lead_aware_priority_key": [
+    "inside_target_queue",
+    "distance_to_workstation",
+    "station_leg_issue_time",
+    "agent_id"
+  ],
+  "logical_cpu_count": 20,
+  "lra_fallback_enabled": true,
+  "mandatory_service_dwell": true,
+  "mandatory_service_dwell_handling": "policy_independent",
+  "method_specific_service_priority_enabled": false,
+  "methods": [
+    "pibt_pressure_aware"
+  ],
+  "native_failures_only": false,
+  "pbs_lead_aware_branch_rule": "native_path_cost_then_conflict_count_then_lead_tiebreak",
+  "pbs_lead_aware_scope": "conflicts_touching_target_queue",
+  "pbs_mandatory_service_handling": "service_preserving_branch_first_both_branches_retained",
+  "pbs_pressure_right_of_way": "preferred_conflict_branch_generated_first_both_branches_retained",
+  "pibt_lead_aware_branch_rule": "native_age_then_initial_distance_then_local_lead_tiebreak_then_seeded_tie",
+  "pibt_lead_aware_scope": "current_or_one_action_touches_target_queue",
+  "pibt_mandatory_service_handling": "forced_wait_before_policy_order",
+  "pibt_pressure_right_of_way": "pressure_lead_before_native_age_near_target_queue",
+  "pibt_random_tiebreak": true,
+  "pickup_layout_seed": 3,
+  "planning_window": 20,
+  "platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
+  "pressure_action_timing": "state_t_scores_action_t_plus_1",
+  "pressure_evaluation": "projected_each_step",
+  "pressure_population": "all_agents_in_queue_region",
+  "pressure_priority_order": [
+    "mandatory_service_dwell",
+    "to_exit",
+    "pressure_lead_near_target_queue",
+    "native_solver_priority"
+  ],
+  "pressure_priority_parent": "lead_aware",
+  "pressure_privilege_key": [
+    "inside_target_queue",
+    "distance_to_workstation",
+    "station_leg_issue_time",
+    "agent_id"
+  ],
+  "pressure_privileged_inbound_count": 2,
+  "pressure_privileged_right_of_way": "top_ranked_lead_queue_local_priority",
+  "pressure_queue_cost": 2,
+  "pressure_right_of_way_count_per_station": 1,
+  "pressure_task_metadata": "executed_only",
+  "pressure_threshold": 3,
+  "process_timeout": 600,
+  "screen": 0,
+  "seeds": [
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "service_time": 3,
+  "shared_exit_clearance_enabled": true,
+  "shared_exit_clearance_feasibility": "collision_constraints_unchanged",
+  "shared_exit_clearance_phase": "TO_EXIT",
+  "shared_exit_requirement": "service_to_selected_exit_before_next_task",
+  "simulation_time": 1000,
+  "simulation_window": 5,
+  "source_git_commit": "33ba5489e35ab66ef496a418f961c787477de863",
+  "source_git_dirty": true,
+  "stop_at_first_all_failed_count": true,
+  "traffic_jam_rule": "rhcr_majority_wait_full_execution_window_and_no_service_completion"
+}

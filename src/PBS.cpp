@@ -9,7 +9,7 @@
 void PBS::clear()
 {
     path_planner.clear_transition_cost();
-    workstation_pressure_projection.clear();
+    workstation_pressure_base_projection.clear();
     runtime = 0;
     runtime_rt = 0;
 	runtime_plan_paths = 0;
@@ -25,6 +25,8 @@ void PBS::clear()
     HL_num_generated = 0;
     LL_num_expanded = 0;
     LL_num_generated = 0;
+    pressure_cost_evaluations = 0;
+    pressure_cost_applications = 0;
     solution_found = false;
     solution_cost = -2;
     // focal_list_threshold = -1;
@@ -424,7 +426,7 @@ WorkstationAgentContext PBS::projected_context_for_goal(
 }
 
 int PBS::workstation_transition_cost(
-    int agent, const State& current, const State& next, int goal_id) const
+    int agent, const State& current, const State& next, int goal_id)
 {
     if (!is_pressure_aware_policy(station_policy) ||
         workstation_context.size() != static_cast<size_t>(num_of_agents) ||
@@ -437,18 +439,33 @@ int PBS::workstation_transition_cost(
         return 0;
 
     const int local_t = std::max(current.timestep, 0);
-    if (local_t >= static_cast<int>(workstation_pressure_projection.size()))
+    if (local_t >= static_cast<int>(workstation_pressure_base_projection.size()) ||
+        agent < 0 || agent >= static_cast<int>(goal_locations.size()) ||
+        goal_id < 0 ||
+        goal_id >= static_cast<int>(goal_locations[agent].size()))
         return 0;
-    const WorkstationAgentContext context =
-        projected_context_for_goal(agent, goal_id);
-    return workstation_pressure_action_cost_from_base(
-        *grid, workstation_pressure_projection[local_t], context,
-        agent, current.location, next.location);
+    const int station_id = workstation_pressure_penalty_station_from_base(
+        *grid, workstation_pressure_base_projection[local_t],
+        projected_context_for_goal(agent, goal_id), agent,
+        current.location, pressure_privileged_inbound_count);
+    if (station_id < 0)
+        return 0;
+
+    pressure_cost_evaluations++;
+    const bool occupies_penalized_zone = grid->has_complete_zone_index() ?
+        grid->station_for_zone_cell(next.location) == station_id :
+        grid->stations[station_id].zone_cells.find(next.location) !=
+            grid->stations[station_id].zone_cells.end();
+    const int cost = occupies_penalized_zone ?
+        kWorkstationPressureQueueCost : 0;
+    if (cost > 0)
+        pressure_cost_applications++;
+    return cost;
 }
 
 void PBS::prepare_workstation_pressure_projection(int agent)
 {
-    workstation_pressure_projection.clear();
+    workstation_pressure_base_projection.clear();
     const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
     if (!is_pressure_aware_policy(station_policy) || grid == nullptr ||
         workstation_context.size() != static_cast<size_t>(num_of_agents))
@@ -456,7 +473,7 @@ void PBS::prepare_workstation_pressure_projection(int agent)
         return;
     }
 
-    workstation_pressure_projection.reserve(window);
+    workstation_pressure_base_projection.reserve(window);
     for (int local_t = 0; local_t < window; local_t++)
     {
         vector<int> locations(num_of_agents);
@@ -478,9 +495,10 @@ void PBS::prepare_workstation_pressure_projection(int agent)
                 contexts[other] = workstation_context[other];
             }
         }
-        workstation_pressure_projection.push_back(
+        workstation_pressure_base_projection.push_back(
             evaluate_workstation_pressure_without_agent(
-                *grid, locations, contexts, agent));
+                *grid, locations, contexts, agent,
+                pressure_privileged_inbound_count));
     }
 }
 
@@ -499,12 +517,15 @@ Path PBS::run_low_level_path(int agent, ReservationTable& reservations)
     Path path = path_planner.run(
         G, starts[agent], goal_locations[agent], reservations);
     path_planner.clear_transition_cost();
-    workstation_pressure_projection.clear();
+    workstation_pressure_base_projection.clear();
     return path;
 }
 
-bool PBS::prefer_workstation_branch(const Conflict& conflict, pair<int, int>& preferred_priority) const
+bool PBS::prefer_workstation_branch(
+    const Conflict& conflict, pair<int, int>& preferred_priority,
+    bool& direct_preference) const
 {
+    direct_preference = false;
     if (workstation_context.size() != (size_t)num_of_agents)
         return false;
 
@@ -520,12 +541,128 @@ bool PBS::prefer_workstation_branch(const Conflict& conflict, pair<int, int>& pr
     if (workstation_mandatory_dwell_preferred_priority(
             a1, c1.phase, a2, c2.phase, preferred_priority))
     {
+        direct_preference = true;
         return true;
     }
-    if (!uses_workstation_departure_priority(station_policy))
+    if (uses_workstation_departure_priority(station_policy) &&
+        workstation_preferred_priority(
+            station_policy, a1, c1.phase, a2, c2.phase, preferred_priority))
+    {
+        direct_preference = true;
+        return true;
+    }
+    vector<int> leads;
+    if (is_pressure_aware_policy(station_policy))
+    {
+        const WorkstationPressureSnapshot pressure =
+            workstation_pressure_at(t, &leads);
+        const bool a1_has_pressure_priority =
+            workstation_pressure_agent_is_privileged(pressure, c1, a1) &&
+            c1.station_id >= 0 &&
+            c1.station_id < static_cast<int>(leads.size()) &&
+            leads[c1.station_id] == a1 &&
+            workstation_conflict_touches_station_zone(
+                *grid, c1.station_id, v1, v2);
+        const bool a2_has_pressure_priority =
+            workstation_pressure_agent_is_privileged(pressure, c2, a2) &&
+            c2.station_id >= 0 &&
+            c2.station_id < static_cast<int>(leads.size()) &&
+            leads[c2.station_id] == a2 &&
+            workstation_conflict_touches_station_zone(
+                *grid, c2.station_id, v1, v2);
+        if (a1_has_pressure_priority != a2_has_pressure_priority)
+        {
+            preferred_priority = a1_has_pressure_priority ?
+                std::make_pair(a2, a1) : std::make_pair(a1, a2);
+            direct_preference = true;
+            return true;
+        }
+        // Native child quality orders conflicts within the privileged class.
+        if (a1_has_pressure_priority || a2_has_pressure_priority)
+            return false;
+    }
+
+    if (!uses_workstation_lead_priority(station_policy))
         return false;
-    return workstation_preferred_priority(
-        station_policy, a1, c1.phase, a2, c2.phase, preferred_priority);
+
+    if (leads.empty())
+        leads = workstation_lead_agents_at(t);
+    const bool a1_is_lead =
+        c1.phase == WorkstationAgentPhase::TO_STATION &&
+        c1.station_id >= 0 && c1.station_id < static_cast<int>(leads.size()) &&
+        leads[c1.station_id] == a1;
+    const bool a2_is_lead =
+        c2.phase == WorkstationAgentPhase::TO_STATION &&
+        c2.station_id >= 0 && c2.station_id < static_cast<int>(leads.size()) &&
+        leads[c2.station_id] == a2;
+    const bool a1_has_local_priority = a1_is_lead &&
+        workstation_conflict_touches_station_zone(
+            *grid, c1.station_id, v1, v2);
+    const bool a2_has_local_priority = a2_is_lead &&
+        workstation_conflict_touches_station_zone(
+            *grid, c2.station_id, v1, v2);
+    if (a1_has_local_priority == a2_has_local_priority)
+        return false;
+    preferred_priority = a1_has_local_priority ?
+        std::make_pair(a2, a1) : std::make_pair(a1, a2);
+    return true;
+}
+
+vector<int> PBS::workstation_lead_agents_at(int local_t) const
+{
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    if (grid == nullptr || workstation_context.size() != (size_t)num_of_agents)
+        return {};
+
+    vector<int> locations(num_of_agents);
+    vector<WorkstationAgentContext> contexts(num_of_agents);
+    for (int agent = 0; agent < num_of_agents; agent++)
+    {
+        locations[agent] = starts[agent].location;
+        if (agent < static_cast<int>(paths.size()) && paths[agent] != nullptr &&
+            !paths[agent]->empty())
+        {
+            const Path& path = *paths[agent];
+            const int path_t = std::min(
+                std::max(local_t, 0), static_cast<int>(path.size()) - 1);
+            locations[agent] = path[path_t].location;
+        }
+        contexts[agent] = projected_context_at(agent, local_t);
+    }
+    return evaluate_workstation_lead_agents(*grid, locations, contexts);
+}
+
+
+WorkstationPressureSnapshot PBS::workstation_pressure_at(
+    int local_t, vector<int>* lead_agents) const
+{
+    const auto* grid = dynamic_cast<const WorkstationGrid*>(&G);
+    if (grid == nullptr || workstation_context.size() != (size_t)num_of_agents)
+        return {};
+
+    vector<int> locations(num_of_agents);
+    vector<WorkstationAgentContext> contexts(num_of_agents);
+    for (int agent = 0; agent < num_of_agents; agent++)
+    {
+        locations[agent] = starts[agent].location;
+        if (agent < static_cast<int>(paths.size()) && paths[agent] != nullptr &&
+            !paths[agent]->empty())
+        {
+            const Path& path = *paths[agent];
+            const int path_t = std::min(
+                std::max(local_t, 0), static_cast<int>(path.size()) - 1);
+            locations[agent] = path[path_t].location;
+        }
+        contexts[agent] = projected_context_at(agent, local_t);
+    }
+    WorkstationPressureSnapshot snapshot;
+    WorkstationPressureWorkspace workspace;
+    evaluate_workstation_pressure(
+        *grid, locations, contexts, snapshot, workspace,
+        pressure_privileged_inbound_count);
+    if (lead_agents != nullptr)
+        *lead_agents = std::move(workspace.lead_agents);
+    return snapshot;
 }
 
 
@@ -883,14 +1020,22 @@ bool PBS::run(const vector<State>& starts,
                 i = new PBSNode();
 	    resolve_conflict(curr->conflict, n[0], n[1]);
         pair<int, int> preferred_priority(-1, -1);
-        bool biased_branch = prefer_workstation_branch(curr->conflict, preferred_priority);
-        if (biased_branch && n[0]->priority != preferred_priority)
-            std::swap(n[0], n[1]);
+        bool direct_preference = false;
+        bool biased_branch = prefer_workstation_branch(
+            curr->conflict, preferred_priority, direct_preference);
+        int preferred_child = -1;
+        if (biased_branch)
+            preferred_child = n[0]->priority == preferred_priority ? 0 : 1;
 
-        // int loc = std::get<2>(*curr->conflict);
+        // Generate a direct-preference child first so an immediate solution
+        // cannot bypass mandatory dwell, exit, or pressure right of way.
+        int child_order[2] = {0, 1};
+        if (direct_preference && preferred_child == 1)
+            std::swap(child_order[0], child_order[1]);
         vector<Path*> copy(paths);
-        for (auto & i : n)
+        for (int child_index : child_order)
         {
+            PBSNode*& i = n[child_index];
             bool sol = generate_child(i, curr);
             if (sol)
             {
@@ -927,13 +1072,34 @@ bool PBS::run(const vector<State>& starts,
         {
             if (n[0] != nullptr && n[1] != nullptr)
             {
-                if (biased_branch)
+                // Mandatory dwell, exit clearance, and pressured privilege
+                // select the first branch directly. Lead-Aware remains a
+                // tie-break after native child quality.
+                if (direct_preference && preferred_child == 0)
                 {
                     push_node(n[1]);
                     push_node(n[0]);
                 }
+                else if (direct_preference)
+                {
+                    push_node(n[0]);
+                    push_node(n[1]);
+                }
                 else if (n[0]->f_val < n[1]->f_val ||
-                    (n[0]->f_val == n[1]->f_val && n[0]->num_of_collisions < n[1]->num_of_collisions))
+                    (n[0]->f_val == n[1]->f_val &&
+                     n[0]->num_of_collisions < n[1]->num_of_collisions))
+                {
+                    push_node(n[1]);
+                    push_node(n[0]);
+                }
+                else if (n[1]->f_val < n[0]->f_val ||
+                    (n[1]->f_val == n[0]->f_val &&
+                     n[1]->num_of_collisions < n[0]->num_of_collisions))
+                {
+                    push_node(n[0]);
+                    push_node(n[1]);
+                }
+                else if (preferred_child == 0)
                 {
                     push_node(n[1]);
                     push_node(n[0]);

@@ -12,15 +12,19 @@ from pathlib import Path
 
 METHOD_ORDER = [
     "pbs_vanilla",
+    "pbs_lead_aware",
     "pbs_departure_aware",
     "pbs_pressure_aware",
     "pibt_vanilla",
+    "pibt_lead_aware",
     "pibt_departure_aware",
     "pibt_pressure_aware",
     "pibt2_vanilla",
+    "pibt2_lead_aware",
     "pibt2_departure_aware",
     "pibt2_pressure_aware",
     "pibt_legacy_vanilla",
+    "pibt_legacy_lead_aware",
     "pibt_legacy_departure_aware",
     "pibt_legacy_pressure_aware",
 ]
@@ -66,6 +70,9 @@ METRICS = [
     "traffic_jam_fraction",
     "lra_fallback_episodes",
     "lra_fallback_wait_commands",
+    "pbs_pressure_cost_evaluations",
+    "pbs_pressure_cost_applications",
+    "pbs_pressure_cost_application_fraction",
     "pibt_inheritance_calls",
     "pibt_backtracks",
     "pibt_wait_fallbacks",
@@ -83,12 +90,15 @@ PAIRED_METRICS = [
     "pibt_wait_fallback_rate_per_1000_agent_steps",
 ]
 PAIRED_COMPARISONS = {
+    "pbs_lead_aware": ["pbs_vanilla"],
     "pbs_departure_aware": ["pbs_vanilla"],
-    "pbs_pressure_aware": ["pbs_departure_aware", "pbs_vanilla"],
+    "pbs_pressure_aware": ["pbs_lead_aware", "pbs_vanilla"],
+    "pibt_lead_aware": ["pibt_vanilla"],
     "pibt_departure_aware": ["pibt_vanilla"],
-    "pibt_pressure_aware": ["pibt_departure_aware", "pibt_vanilla"],
+    "pibt_pressure_aware": ["pibt_lead_aware", "pibt_vanilla"],
+    "pibt2_lead_aware": ["pibt2_vanilla"],
     "pibt2_departure_aware": ["pibt2_vanilla"],
-    "pibt2_pressure_aware": ["pibt2_departure_aware", "pibt2_vanilla"],
+    "pibt2_pressure_aware": ["pibt2_lead_aware", "pibt2_vanilla"],
 }
 T_CRITICAL_95 = [
     0.0,
@@ -507,9 +517,10 @@ def filter_manifest_cells(
     manifest = json.loads(manifest_path.read_text())
     methods = set(manifest.get("methods", []))
     seeds = {int(seed) for seed in manifest.get("seeds", [])}
+    manifest_grids = manifest.get("evaluated_grids") or manifest.get("grids", {})
     grids = {
         str(map_name): {int(count) for count in counts}
-        for map_name, counts in manifest.get("grids", {}).items()
+        for map_name, counts in manifest_grids.items()
     }
     if not methods or not seeds or not grids:
         return rows

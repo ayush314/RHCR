@@ -21,7 +21,7 @@ class AggregateResultsTests(unittest.TestCase):
         rows = []
         for layout in (2, 3):
             for seed in (6, 7):
-                for method, value in (("pibt_pressure_aware", 1.0), ("pibt_departure_aware", 0.0)):
+                for method, value in (("pibt_pressure_aware", 1.0), ("pibt_lead_aware", 0.0)):
                     rows.append({
                         "map": "sortation_small_p20",
                         "agent_count": 100,
@@ -49,6 +49,23 @@ class AggregateResultsTests(unittest.TestCase):
             "methods": ["pibt_pressure"],
             "seeds": [1],
             "grids": {"alley": [20]},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "run_manifest.json"
+            manifest_path.write_text(json.dumps(manifest))
+            filtered = aggregate_results.filter_manifest_cells(rows, manifest_path)
+        self.assertEqual(filtered, rows[:1])
+
+    def test_manifest_filter_prefers_evaluated_capacity_ladder(self) -> None:
+        rows = [
+            {"map": "alley", "agent_count": 62, "method": "pbs_vanilla", "seed": 1},
+            {"map": "alley", "agent_count": 76, "method": "pbs_vanilla", "seed": 1},
+        ]
+        manifest = {
+            "methods": ["pbs_vanilla"],
+            "seeds": [1],
+            "grids": {"alley": [62, 69, 76]},
+            "evaluated_grids": {"alley": [62, 69]},
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             manifest_path = Path(temp_dir) / "run_manifest.json"
@@ -138,17 +155,19 @@ class RunComparisonTests(unittest.TestCase):
                 self.assertEqual(run_comparison.METHODS[method]["solver"], "PIBT2")
         self.assertEqual(run_comparison.METHODS["pibt_legacy_vanilla"]["solver"], "PIBT")
 
-    def test_departure_aware_methods_are_publication_defaults(self) -> None:
+    def test_lead_aware_methods_are_publication_defaults(self) -> None:
         self.assertEqual(
-            run_comparison.METHODS["pbs_departure_aware"],
-            {"solver": "PBS", "station_policy": "departure_aware"},
+            run_comparison.METHODS["pbs_lead_aware"],
+            {"solver": "PBS", "station_policy": "lead_aware"},
         )
         self.assertEqual(
-            run_comparison.METHODS["pibt_departure_aware"],
-            {"solver": "PIBT2", "pibt_policy": "departure_aware"},
+            run_comparison.METHODS["pibt_lead_aware"],
+            {"solver": "PIBT2", "pibt_policy": "lead_aware"},
         )
-        self.assertIn("pbs_departure_aware", run_comparison.PUBLICATION_METHODS)
-        self.assertIn("pibt_departure_aware", run_comparison.PUBLICATION_METHODS)
+        self.assertIn("pbs_lead_aware", run_comparison.PUBLICATION_METHODS)
+        self.assertIn("pibt_lead_aware", run_comparison.PUBLICATION_METHODS)
+        self.assertNotIn("pbs_departure_aware", run_comparison.PUBLICATION_METHODS)
+        self.assertNotIn("pibt_departure_aware", run_comparison.PUBLICATION_METHODS)
         self.assertNotIn("pbs_phase_aware", run_comparison.METHODS)
         self.assertNotIn("pibt_phase_aware", run_comparison.METHODS)
 
@@ -164,6 +183,20 @@ class RunComparisonTests(unittest.TestCase):
         self.assertEqual(
             run_comparison.PRESSURE_DEFINITION["pressure_task_metadata"],
             "executed_only",
+        )
+
+    def test_human_capacity_ladders_match_the_shared_19_point_counts(self) -> None:
+        alley = REPO_ROOT / "benchmarks" / "alley.json"
+        plaza = REPO_ROOT / "benchmarks" / "plaza.json"
+        self.assertEqual(run_comparison.workstation_start_capacity(alley), 158)
+        self.assertEqual(run_comparison.workstation_start_capacity(plaza), 288)
+        self.assertEqual(
+            run_comparison.capacity_spaced_counts(158),
+            list(range(20, 147, 7)),
+        )
+        self.assertEqual(
+            run_comparison.capacity_spaced_counts(288),
+            list(range(20, 273, 14)),
         )
 
     def test_publication_terminal_classification_keeps_runtime_distinct(self) -> None:
@@ -229,6 +262,17 @@ class RunComparisonTests(unittest.TestCase):
                 signature,
             )
         )
+
+    def test_all_cells_failed_requires_every_completed_cell_to_fail(self) -> None:
+        self.assertTrue(run_comparison.all_cells_failed([
+            {"status": "failed"}, {"status": "failed"},
+        ]))
+        self.assertFalse(run_comparison.all_cells_failed([
+            {"status": "failed"}, {"status": "clean"},
+        ]))
+        self.assertFalse(run_comparison.all_cells_failed([
+            {"status": "failed"}, None,
+        ]))
 
     def test_reset_run_outputs_removes_append_only_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

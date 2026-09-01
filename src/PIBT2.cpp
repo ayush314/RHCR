@@ -29,7 +29,9 @@ PIBT2::PIBT2(const BasicGraph& G, SingleAgentSolver& path_planner) :
 void PIBT2::set_pibt_policy(const string& policy)
 {
     pibt_policy = policy;
-    if (policy == "departure_aware")
+    if (policy == "lead_aware")
+        selected_policy = Policy::LEAD_AWARE;
+    else if (policy == "departure_aware")
         selected_policy = Policy::DEPARTURE_AWARE;
     else if (policy == "pressure_aware")
         selected_policy = Policy::PRESSURE_AWARE;
@@ -224,11 +226,49 @@ bool PIBT2::departure_protected(int agent) const
         pibt_policy, active_context(agent).phase);
 }
 
-void PIBT2::update_pressure_state(const vector<State>& current_states)
+bool PIBT2::lead_protected(int agent) const
+{
+    if (agent < 0 || agent >= static_cast<int>(pressure_contexts.size()))
+        return false;
+    const WorkstationAgentContext& context = pressure_contexts[agent];
+    return context.phase == WorkstationAgentPhase::TO_STATION &&
+        context.station_id >= 0 &&
+        context.station_id < static_cast<int>(lead_agent_by_station.size()) &&
+        lead_agent_by_station[context.station_id] == agent;
+}
+
+bool PIBT2::lead_queue_tiebreak_active(int agent, const State& state) const
+{
+    if (!lead_protected(agent) || workstation_grid == nullptr)
+        return false;
+    return workstation_state_or_action_touches_station_zone(
+        *workstation_grid, pressure_contexts[agent].station_id, state);
+}
+
+bool PIBT2::pressure_priority_active(int agent, const State& state) const
+{
+    if (active_policy() != Policy::PRESSURE_AWARE ||
+        agent < 0 ||
+        agent >= static_cast<int>(pressure_contexts.size()) ||
+        agent >= static_cast<int>(pressure_privileged_scratch.size()) ||
+        pressure_privileged_scratch[agent] == 0 ||
+        !lead_protected(agent) ||
+        workstation_grid == nullptr)
+    {
+        return false;
+    }
+    return workstation_state_or_action_touches_station_zone(
+        *workstation_grid, pressure_contexts[agent].station_id, state);
+}
+
+void PIBT2::update_workstation_policy_state(const vector<State>& current_states)
 {
     pressure_contexts.clear();
     pressure_penalty_station.assign(current_states.size(), -1);
-    if (active_policy() != Policy::PRESSURE_AWARE)
+    pressure_privileged_scratch.assign(current_states.size(), 0);
+    lead_agent_by_station.clear();
+    if (!uses_workstation_lead_priority(pibt_policy) &&
+        active_policy() != Policy::PRESSURE_AWARE)
         return;
     if (workstation_grid == nullptr)
         return;
@@ -240,30 +280,38 @@ void PIBT2::update_pressure_state(const vector<State>& current_states)
         pressure_locations_scratch[agent] = current_states[agent].location;
         pressure_contexts.push_back(active_context(agent));
     }
+    if (active_policy() != Policy::PRESSURE_AWARE)
+    {
+        lead_agent_by_station = evaluate_workstation_lead_agents(
+            *workstation_grid, pressure_locations_scratch, pressure_contexts);
+        return;
+    }
+
     evaluate_workstation_pressure(
         *workstation_grid, pressure_locations_scratch, pressure_contexts,
-        pressure_snapshot, pressure_workspace);
+        pressure_snapshot, pressure_workspace,
+        pressure_privileged_inbound_count);
+    lead_agent_by_station = pressure_workspace.lead_agents;
 
-    for (int agent = 0; agent < static_cast<int>(pressure_contexts.size()); agent++)
+    for (int station_id = 0;
+         station_id < static_cast<int>(pressure_snapshot.station_pressure.size());
+         station_id++)
     {
-        const WorkstationAgentContext& context = pressure_contexts[agent];
-        const int station_id = context.station_id;
-        if (context.phase != WorkstationAgentPhase::TO_STATION ||
-            station_id < 0 ||
-            station_id >= static_cast<int>(workstation_grid->stations.size()) ||
-            station_id >= static_cast<int>(pressure_snapshot.station_pressure.size()) ||
-            !workstation_pressure_active(
+        if (!workstation_pressure_active(
                 pressure_snapshot.station_pressure[station_id]))
-        {
             continue;
-        }
 
+        for (const auto& ranked_agent :
+             pressure_workspace.ranked_inbound_by_station[station_id])
+        {
+            pressure_penalty_station[ranked_agent.second] = station_id;
+        }
         const vector<int>& privileged =
             pressure_snapshot.privileged_inbound_agents[station_id];
-        if (std::find(privileged.begin(), privileged.end(), agent) ==
-            privileged.end())
+        for (int agent : privileged)
         {
-            pressure_penalty_station[agent] = station_id;
+            pressure_penalty_station[agent] = -1;
+            pressure_privileged_scratch[agent] = 1;
         }
     }
 }
@@ -391,6 +439,7 @@ PIBT2::CandidateList PIBT2::ranked_candidates(int agent, int local_t)
         pressure_aware && agent >= 0 &&
         agent < static_cast<int>(pressure_penalty_station.size()) ?
             pressure_penalty_station[agent] : -1;
+    bool has_pressure_cost = false;
     std::array<RankedCandidate, 5> ranked;
     for (size_t index = 0; index < candidates.size; index++)
     {
@@ -407,7 +456,10 @@ PIBT2::CandidateList PIBT2::ranked_candidates(int agent, int local_t)
                         candidate.location) !=
                         workstation_grid->stations[pressure_station].zone_cells.end();
             if (in_station_zone)
+            {
                 cost = kWorkstationPressureQueueCost;
+                has_pressure_cost = true;
+            }
         }
         ranked[index] = {
             candidate,
@@ -434,7 +486,7 @@ PIBT2::CandidateList PIBT2::ranked_candidates(int agent, int local_t)
         return false;
     };
 
-    if (!pressure_aware)
+    if (!pressure_aware || !has_pressure_cost)
     {
         std::sort(ranked.begin(), ranked.begin() + candidates.size, canonical_less);
         for (size_t index = 0; index < candidates.size; index++)
@@ -581,27 +633,46 @@ bool PIBT2::plan_one_step(int local_t, vector<State>& current_states)
         occupied_next[loc] = agent;
     }
 
-    update_pressure_state(current_states);
+    update_workstation_policy_state(current_states);
     order_scratch.clear();
     order_scratch.reserve(num_of_agents);
     protected_class_scratch.assign(num_of_agents, 0);
+    pressure_priority_scratch.assign(num_of_agents, 0);
+    lead_tiebreak_scratch.assign(num_of_agents, 0);
     for (int agent = 0; agent < num_of_agents; agent++)
     {
         if (!agents[agent].has_next)
             order_scratch.push_back(agent);
     }
-    if (active_policy() != Policy::VANILLA)
+    for (int agent = 0; agent < num_of_agents; agent++)
+        protected_class_scratch[agent] = departure_protected(agent);
+    if (active_policy() == Policy::PRESSURE_AWARE)
     {
         for (int agent = 0; agent < num_of_agents; agent++)
-            protected_class_scratch[agent] = departure_protected(agent);
+        {
+            pressure_priority_scratch[agent] = pressure_priority_active(
+                agent, current_states[agent]);
+        }
+    }
+    if (uses_workstation_lead_priority(pibt_policy))
+    {
+        for (int agent = 0; agent < num_of_agents; agent++)
+        {
+            lead_tiebreak_scratch[agent] = lead_queue_tiebreak_active(
+                agent, current_states[agent]);
+        }
     }
     std::sort(order_scratch.begin(), order_scratch.end(), [&](int lhs, int rhs) {
         if (protected_class_scratch[lhs] != protected_class_scratch[rhs])
             return protected_class_scratch[lhs] != 0;
+        if (pressure_priority_scratch[lhs] != pressure_priority_scratch[rhs])
+            return pressure_priority_scratch[lhs] != 0;
         if (agents[lhs].elapsed != agents[rhs].elapsed)
             return agents[lhs].elapsed > agents[rhs].elapsed;
         if (agents[lhs].initial_distance != agents[rhs].initial_distance)
             return agents[lhs].initial_distance > agents[rhs].initial_distance;
+        if (lead_tiebreak_scratch[lhs] != lead_tiebreak_scratch[rhs])
+            return lead_tiebreak_scratch[lhs] != 0;
         return agents[lhs].tie_breaker > agents[rhs].tie_breaker;
     });
 

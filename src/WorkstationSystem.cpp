@@ -76,6 +76,8 @@ void WorkstationSystem::initialize()
     pibt_backtracks_total = 0;
     pibt_wait_fallbacks_total = 0;
     pibt_pressure_rank_changes_total = 0;
+    pbs_pressure_cost_evaluations_total = 0;
+    pbs_pressure_cost_applications_total = 0;
     lra_fallback_episodes = 0;
     lra_fallback_wait_commands = 0;
     last_episode_used_lra_fallback = false;
@@ -286,6 +288,8 @@ void WorkstationSystem::sync_solver_context()
     if (pbs != nullptr)
     {
         pbs->set_workstation_policy(station_policy);
+        pbs->pressure_privileged_inbound_count =
+            pressure_privileged_inbound_count;
         pbs->set_workstation_context(context);
         pbs->set_projected_goal_context(projected_goal_context);
     }
@@ -293,6 +297,8 @@ void WorkstationSystem::sync_solver_context()
     if (pibt != nullptr)
     {
         pibt->set_pibt_policy(pibt_policy);
+        pibt->pressure_privileged_inbound_count =
+            pressure_privileged_inbound_count;
         pibt->tie_seed = (uint64_t)seed;
         pibt->set_workstation_context(context);
         pibt->set_projected_goal_context(projected_goal_context);
@@ -302,6 +308,8 @@ void WorkstationSystem::sync_solver_context()
     if (pibt2 != nullptr)
     {
         pibt2->set_pibt_policy(pibt_policy);
+        pibt2->pressure_privileged_inbound_count =
+            pressure_privileged_inbound_count;
         pibt2->tie_seed = (uint64_t)seed;
         pibt2->set_episode_start_timestep(timestep);
         pibt2->set_workstation_context(context);
@@ -749,7 +757,7 @@ bool WorkstationSystem::resolve_committed_conflicts()
         };
 
         out << "station_policy: " << station_policy << "\n";
-        out << "pressure_threshold: " << kWorkstationPressureThreshold << "\n";
+        out << "pressure_threshold: " << workstation_pressure_threshold() << "\n";
         out << "timestep: " << timestep << "\n";
         out << "simulation_window: " << simulation_window << "\n";
         out << "planning_window: " << planning_window << "\n";
@@ -1276,6 +1284,12 @@ void WorkstationSystem::simulate(int simulation_time)
         bool solved = solve_workstation_episode();
         mean_plan_ms_samples.push_back(solver.runtime * 1000.0);
         plan_timestep_samples.push_back(timestep);
+        PBS* pbs = dynamic_cast<PBS*>(&solver);
+        if (pbs != nullptr)
+        {
+            pbs_pressure_cost_evaluations_total += pbs->pressure_cost_evaluations;
+            pbs_pressure_cost_applications_total += pbs->pressure_cost_applications;
+        }
         PIBT* pibt = dynamic_cast<PIBT*>(&solver);
         if (pibt != nullptr)
         {
@@ -1367,9 +1381,16 @@ void WorkstationSystem::save_results()
            << "pressure_evaluation: projected_each_step" << std::endl
            << "pressure_action_timing: state_t_scores_action_t_plus_1" << std::endl
            << "pressure_task_metadata: executed_only" << std::endl
-           << "pressure_threshold: " << kWorkstationPressureThreshold << std::endl
+           << "pressure_threshold: " << workstation_pressure_threshold() << std::endl
            << "pressure_queue_cost: " << kWorkstationPressureQueueCost << std::endl
-           << "pressure_privileged_inbound_count: " << kWorkstationPrivilegedInboundCount << std::endl
+           << "pbs_pressure_queue_cost_scope: each_planned_zone_occupancy" << std::endl
+           << "pibt_pressure_queue_cost_scope: each_planned_zone_occupancy" << std::endl
+           << "pressure_privileged_inbound_count: " << pressure_privileged_inbound_count << std::endl
+           << "pressure_privileged_right_of_way: top_ranked_lead_queue_local_priority" << std::endl
+           << "pressure_right_of_way_count_per_station: 1" << std::endl
+           << "pressure_priority_order: mandatory_service_dwell,to_exit,pressure_lead_near_target_queue,native_solver_priority" << std::endl
+           << "pbs_pressure_right_of_way: preferred_conflict_branch_generated_first_both_branches_retained" << std::endl
+           << "pibt_pressure_right_of_way: pressure_lead_before_native_age_near_target_queue" << std::endl
            << "native_failures_only: " << (native_failures_only ? 1 : 0) << std::endl
            << "lra_fallback_enabled: " << (!native_failures_only ? 1 : 0) << std::endl
            << "lra_fallback_trigger: native_solver_failure_with_valid_prefix" << std::endl
@@ -1404,6 +1425,7 @@ void WorkstationSystem::save_results()
            << "pressure_active_fraction,pressured_station_fraction,mean_queue_region_occupancy_fraction,"
            << "traffic_jam_fraction,"
            << "lra_fallback_episodes,lra_fallback_wait_commands,"
+           << "pbs_pressure_cost_evaluations,pbs_pressure_cost_applications,pbs_pressure_cost_application_fraction,"
            << "pibt_inheritance_calls,pibt_backtracks,pibt_wait_fallbacks,pibt_pressure_rank_changes"
            << std::endl;
     auto episode_fraction = [&](int count) {
@@ -1465,6 +1487,11 @@ void WorkstationSystem::save_results()
            << episode_fraction(traffic_jam_episodes) << ","
            << lra_fallback_episodes << ","
            << lra_fallback_wait_commands << ","
+           << pbs_pressure_cost_evaluations_total << ","
+           << pbs_pressure_cost_applications_total << ","
+           << (pbs_pressure_cost_evaluations_total > 0 ?
+               static_cast<double>(pbs_pressure_cost_applications_total) /
+                   pbs_pressure_cost_evaluations_total : 0.0) << ","
            << pibt_inheritance_calls_total << ","
            << pibt_backtracks_total << ","
            << pibt_wait_fallbacks_total << ","

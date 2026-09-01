@@ -13,7 +13,7 @@ import run_comparison
 
 
 DENSITIES = (5, 20, 100)
-METHODS = ("pibt_vanilla", "pibt_departure_aware", "pibt_pressure_aware")
+METHODS = ("pibt_vanilla", "pibt_lead_aware", "pibt_pressure_aware")
 MAP_CONFIG = {
     "small": {
         "stem": "sortation_small",
@@ -549,7 +549,7 @@ def main() -> int:
     parser.add_argument("--simulation-window", type=int, default=5)
     parser.add_argument("--service-time", type=int, default=3)
     parser.add_argument("--cutoff-time", type=int, default=60)
-    parser.add_argument("--process-timeout", type=int, default=1800)
+    parser.add_argument("--process-timeout", type=int, default=600)
     parser.add_argument("--precompute-timeout", type=int, default=14400)
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--large-100-jobs", type=int, default=3)

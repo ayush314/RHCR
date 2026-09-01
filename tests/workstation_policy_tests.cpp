@@ -191,9 +191,52 @@ public:
     bool load_map(string) override { return true; }
 };
 
+class PressurePriorityWorkstationGraph : public WorkstationGrid
+{
+public:
+    PressurePriorityWorkstationGraph()
+    {
+        rows = 2;
+        cols = 3;
+        move[0] = -3;
+        move[1] = 1;
+        move[2] = 3;
+        move[3] = -1;
+        types.assign(6, "Travel");
+        types[4] = "Workstation";
+        weights.assign(6, vector<double>(5, WEIGHT_MAX));
+        for (int row = 0; row < rows; row++)
+        {
+            for (int col = 0; col < cols; col++)
+            {
+                const int loc = row * cols + col;
+                if (row > 0)
+                    weights[loc][0] = 1;
+                if (col + 1 < cols)
+                    weights[loc][1] = 1;
+                if (row + 1 < rows)
+                    weights[loc][2] = 1;
+                if (col > 0)
+                    weights[loc][3] = 1;
+                weights[loc][4] = 1;
+            }
+        }
+        heuristics[4] = {2, 1, 2, 1, 0, 1};
+        WorkstationStation station;
+        station.station_id = 0;
+        station.workstation = 4;
+        station.exit_cells = {3, 5};
+        station.zone_cells = {0, 1, 2, 3, 4, 5};
+        stations.push_back(station);
+    }
+
+    bool load_map(string) override { return true; }
+};
+
 int main()
 {
     assert(is_valid_workstation_policy("vanilla"));
+    assert(is_valid_workstation_policy("lead_aware"));
     assert(is_valid_workstation_policy("departure_aware"));
     assert(is_valid_workstation_policy("pressure_aware"));
     assert(!is_valid_workstation_policy("phase_aware"));
@@ -202,14 +245,19 @@ int main()
     assert(uses_workstation_departure_priority("departure_aware"));
     assert(uses_workstation_departure_priority("pressure_aware"));
     assert(!uses_workstation_departure_priority("phase_aware"));
-    assert(!uses_workstation_departure_priority("vanilla"));
+    assert(uses_workstation_departure_priority("vanilla"));
+    assert(uses_workstation_departure_priority("lead_aware"));
+    assert(uses_workstation_lead_priority("lead_aware"));
+    assert(uses_workstation_lead_priority("pressure_aware"));
+    assert(!uses_workstation_lead_priority("departure_aware"));
+    assert(!uses_workstation_lead_priority("vanilla"));
     assert(workstation_protected_precedes(
         "departure_aware", WorkstationAgentPhase::TO_EXIT,
         WorkstationAgentPhase::TO_PICKUP));
     assert(!workstation_protected_precedes(
         "departure_aware", WorkstationAgentPhase::SERVICE,
         WorkstationAgentPhase::TO_STATION));
-    assert(!workstation_protected_precedes(
+    assert(workstation_protected_precedes(
         "vanilla", WorkstationAgentPhase::TO_EXIT,
         WorkstationAgentPhase::TO_STATION));
     std::pair<int, int> preferred_priority(-1, -1);
@@ -223,9 +271,12 @@ int main()
     assert(workstation_preferred_priority(
         "pressure_aware", 3, WorkstationAgentPhase::TO_EXIT,
         7, WorkstationAgentPhase::TO_STATION, preferred_priority));
+    assert(preferred_priority == std::make_pair(7, 3));
     assert(!workstation_preferred_priority(
         "pressure_aware", 3, WorkstationAgentPhase::SERVICE,
         7, WorkstationAgentPhase::TO_STATION, preferred_priority));
+    assert(workstation_policy_protects_phase(
+        "pressure_aware", WorkstationAgentPhase::TO_EXIT));
     assert(!workstation_policy_protects_phase(
         "pressure_aware", WorkstationAgentPhase::SERVICE));
     assert(!workstation_policy_protects_phase(
@@ -242,8 +293,23 @@ int main()
         3, WorkstationAgentPhase::SERVICE,
         7, WorkstationAgentPhase::SERVICE, preferred_priority));
     assert(kWorkstationPressureThreshold == 3);
-    assert(kWorkstationPrivilegedInboundCount == 4);
+    assert(kWorkstationPrivilegedInboundCount == 2);
     assert(kWorkstationPressureQueueCost == 2);
+    FiveCellWorkstationGraph local_priority_graph;
+    assert(!workstation_conflict_touches_station_zone(
+        local_priority_graph, 0, 0, -1));
+    assert(workstation_conflict_touches_station_zone(
+        local_priority_graph, 0, 0, 1));
+    assert(workstation_conflict_touches_station_zone(
+        local_priority_graph, 0, 4, -1));
+    assert(!workstation_conflict_touches_station_zone(
+        local_priority_graph, -1, 1, 2));
+    assert(workstation_state_or_action_touches_station_zone(
+        local_priority_graph, 0, State(0, 0, -1)));
+    assert(!workstation_state_or_action_touches_station_zone(
+        local_priority_graph, 0, State(0, 0, 3)));
+    assert(!workstation_state_or_action_touches_station_zone(
+        local_priority_graph, -1, State(1, 0, -1)));
     assert(workstation_window_is_stalled(true, 10, 10));
     assert(!workstation_window_is_stalled(true, 10, 11));
     assert(!workstation_window_is_stalled(false, 10, 10));
@@ -253,6 +319,10 @@ int main()
     }) == 3);
     assert(workstation_pressure_active(3));
     assert(!workstation_pressure_active(2));
+    set_workstation_pressure_threshold(4);
+    assert(workstation_pressure_active(4));
+    assert(!workstation_pressure_active(3));
+    set_workstation_pressure_threshold(kWorkstationPressureThreshold);
     assert(workstation_privilege_key(true, 9, 20, 4) <
            workstation_privilege_key(false, 1, 1, 1));
     const std::map<int, std::tuple<int, int, int, int>> privilege_keys = {
@@ -266,6 +336,10 @@ int main()
         std::vector<int>{4, 7, 9, 10, 11},
         [&](int agent) { return privilege_keys.at(agent); });
     assert((selected == std::vector<int>{7, 9, 4, 10}));
+    const auto selected_two = select_workstation_privileged_agents(
+        std::vector<int>{4, 7, 9, 10, 11},
+        [&](int agent) { return privilege_keys.at(agent); }, 2);
+    assert((selected_two == std::vector<int>{7, 9}));
 
     FiveCellWorkstationGraph pressure_graph;
     vector<WorkstationAgentContext> aligned_contexts(6);
@@ -278,17 +352,40 @@ int main()
     // Historical queue entry must not outrank agents currently in the queue.
     aligned_contexts[0].boundary_entry_t = 1;
     const vector<int> pressured_locations = {0, 0, 1, 2, 3, 4};
-    const WorkstationPressureSnapshot pressure_snapshot =
-        evaluate_workstation_pressure(
-            pressure_graph, pressured_locations, aligned_contexts);
+    const vector<int> lead_agents = evaluate_workstation_lead_agents(
+        pressure_graph, pressured_locations, aligned_contexts);
+    REQUIRE((lead_agents == vector<int>{5}));
+    WorkstationPressureSnapshot pressure_snapshot;
+    WorkstationPressureWorkspace pressure_workspace;
+    evaluate_workstation_pressure(
+        pressure_graph, pressured_locations, aligned_contexts,
+        pressure_snapshot, pressure_workspace);
+    REQUIRE(pressure_workspace.lead_agents == lead_agents);
     REQUIRE(pressure_snapshot.station_pressure[0] == 4);
     REQUIRE((pressure_snapshot.privileged_inbound_agents[0] ==
+             vector<int>{5, 4}));
+    const WorkstationPressureSnapshot pressure_snapshot_k4 =
+        evaluate_workstation_pressure(
+            pressure_graph, pressured_locations, aligned_contexts, 4);
+    REQUIRE((pressure_snapshot_k4.privileged_inbound_agents[0] ==
              vector<int>{5, 4, 3, 2}));
+    REQUIRE(workstation_pressure_action_cost(
+        pressure_graph, pressure_snapshot, aligned_contexts, 3, 2) == 2);
+    REQUIRE(workstation_pressure_action_cost(
+        pressure_graph, pressure_snapshot_k4, aligned_contexts, 3, 2) == 0);
+    REQUIRE(workstation_pressure_agent_is_privileged(
+        pressure_snapshot, aligned_contexts, 5));
+    REQUIRE(workstation_pressure_agent_is_privileged(
+        pressure_snapshot, aligned_contexts[4], 4));
+    REQUIRE(!workstation_pressure_agent_is_privileged(
+        pressure_snapshot, aligned_contexts, 3));
     REQUIRE(workstation_pressure_action_cost(
         pressure_graph, pressure_snapshot, aligned_contexts, 0, 1) == 2);
     const WorkstationPressureBaseSnapshot pressure_base =
         evaluate_workstation_pressure_without_agent(
             pressure_graph, pressured_locations, aligned_contexts, 0);
+    REQUIRE(workstation_pressure_penalty_station_from_base(
+        pressure_graph, pressure_base, aligned_contexts[0], 0, 0) == 0);
     REQUIRE(workstation_pressure_action_cost_from_base(
         pressure_graph, pressure_base, aligned_contexts[0], 0, 0, 1) ==
         workstation_pressure_action_cost(
@@ -309,9 +406,13 @@ int main()
         }
     }
     REQUIRE(workstation_pressure_action_cost(
-        pressure_graph, pressure_snapshot, aligned_contexts, 2, 2) == 0);
+        pressure_graph, pressure_snapshot, aligned_contexts, 4, 2) == 0);
+    REQUIRE(workstation_pressure_action_cost(
+        pressure_graph, pressure_snapshot, aligned_contexts, 1, 2) == 2);
     vector<WorkstationAgentContext> exit_contexts = aligned_contexts;
     exit_contexts[0].phase = WorkstationAgentPhase::TO_EXIT;
+    REQUIRE(workstation_pressure_penalty_station_from_base(
+        pressure_graph, pressure_base, exit_contexts[0], 0, 0) == -1);
     REQUIRE(workstation_pressure_action_cost(
         pressure_graph, pressure_snapshot, exit_contexts, 0, 1) == 0);
     const WorkstationPressureSnapshot unpressured_snapshot =
@@ -319,6 +420,25 @@ int main()
             pressure_graph, vector<int>{0, 0, 0, 0, 1, 2}, aligned_contexts);
     REQUIRE(workstation_pressure_action_cost(
         pressure_graph, unpressured_snapshot, aligned_contexts, 0, 1) == 0);
+
+    vector<WorkstationAgentContext> transition_contexts(6);
+    for (WorkstationAgentContext& context : transition_contexts)
+    {
+        context.station_id = 0;
+        context.phase = WorkstationAgentPhase::TO_STATION;
+        context.task_issue_t = 10;
+    }
+    const vector<int> transition_reference_locations = {0, 0, 1, 2, 3, 4};
+    const WorkstationPressureBaseSnapshot transition_base =
+        evaluate_workstation_pressure_without_agent(
+            pressure_graph, transition_reference_locations,
+            transition_contexts, 0);
+    REQUIRE(workstation_pressure_action_cost_from_base(
+        pressure_graph, transition_base, transition_contexts[0],
+        0, 0, 1) == 2);
+    REQUIRE(workstation_pressure_action_cost_from_base(
+        pressure_graph, transition_base, transition_contexts[0],
+        0, 4, 1) == 0);
 
     TestGraph graph;
     ReservationTable reservations(graph);
@@ -506,6 +626,96 @@ int main()
     REQUIRE(aligned_pressure_pibt.solution[0][1].location == 1);
     REQUIRE(aligned_pressure_pibt.pressure_rank_changes > 0);
 
+    PressurePriorityWorkstationGraph pressure_priority_graph;
+    vector<WorkstationAgentContext> priority_contexts(4);
+    priority_contexts[0].station_id = 0;
+    priority_contexts[0].phase = WorkstationAgentPhase::TO_STATION;
+    priority_contexts[0].task_issue_t = 0;
+    priority_contexts[1].station_id = 0;
+    priority_contexts[1].phase = WorkstationAgentPhase::TO_STATION;
+    priority_contexts[1].task_issue_t = 10;
+    priority_contexts[2].station_id = 0;
+    priority_contexts[2].phase = WorkstationAgentPhase::TO_STATION;
+    priority_contexts[2].task_issue_t = 1;
+    const vector<vector<WorkstationAgentContext>> priority_projection = {
+        {priority_contexts[0]}, {priority_contexts[1]},
+        {priority_contexts[2]}, {priority_contexts[3]},
+    };
+    const vector<State> priority_starts = {
+        State(1, 0, -1), State(5, 0, -1),
+        State(3, 0, -1), State(0, 0, -1),
+    };
+    const vector<vector<pair<int, int>>> priority_goals = {
+        {{4, 0}}, {{4, 0}}, {{3, 0}}, {{0, 0}},
+    };
+
+    PIBT2 native_priority_control(
+        pressure_priority_graph, aligned_pibt_path_planner);
+    native_priority_control.window = 1;
+    native_priority_control.random_tiebreak = false;
+    native_priority_control.set_pibt_policy("vanilla");
+    native_priority_control.set_executed_priority_age({0, 100, 0, 0});
+    native_priority_control.set_workstation_context(priority_contexts);
+    native_priority_control.set_projected_goal_context(priority_projection);
+    REQUIRE(native_priority_control.run(priority_starts, priority_goals, 10));
+    REQUIRE(native_priority_control.solution[1][1].location == 4);
+
+    PIBT2 pressure_priority_order(
+        pressure_priority_graph, aligned_pibt_path_planner);
+    pressure_priority_order.window = 1;
+    pressure_priority_order.random_tiebreak = false;
+    pressure_priority_order.pressure_privileged_inbound_count = 2;
+    pressure_priority_order.set_pibt_policy("pressure_aware");
+    pressure_priority_order.set_executed_priority_age({0, 100, 0, 0});
+    pressure_priority_order.set_workstation_context(priority_contexts);
+    pressure_priority_order.set_projected_goal_context(priority_projection);
+    REQUIRE(pressure_priority_order.run(priority_starts, priority_goals, 10));
+    REQUIRE(pressure_priority_order.solution[0][1].location == 4);
+    REQUIRE(pressure_priority_order.solution[1][1].location != 4);
+
+    const vector<State> second_privileged_starts = {
+        State(4, 0, -1), State(0, 0, -1),
+        State(2, 0, -1), State(5, 0, -1),
+    };
+    const vector<vector<pair<int, int>>> second_privileged_goals = {
+        {{4, 0}}, {{1, 0}}, {{1, 0}}, {{5, 0}},
+    };
+    PIBT2 second_privileged_native_order(
+        pressure_priority_graph, aligned_pibt_path_planner);
+    second_privileged_native_order.window = 1;
+    second_privileged_native_order.random_tiebreak = false;
+    second_privileged_native_order.pressure_privileged_inbound_count = 2;
+    second_privileged_native_order.set_pibt_policy("pressure_aware");
+    second_privileged_native_order.set_executed_priority_age({0, 100, 0, 0});
+    second_privileged_native_order.set_workstation_context(priority_contexts);
+    second_privileged_native_order.set_projected_goal_context(
+        priority_projection);
+    REQUIRE(second_privileged_native_order.run(
+        second_privileged_starts, second_privileged_goals, 10));
+    REQUIRE(second_privileged_native_order.solution[1][1].location == 1);
+    REQUIRE(second_privileged_native_order.solution[2][1].location != 1);
+
+    vector<WorkstationAgentContext> exit_priority_contexts = priority_contexts;
+    exit_priority_contexts[1].phase = WorkstationAgentPhase::TO_EXIT;
+    const vector<vector<WorkstationAgentContext>> exit_priority_projection = {
+        {exit_priority_contexts[0]}, {exit_priority_contexts[1]},
+        {exit_priority_contexts[2]}, {exit_priority_contexts[3]},
+    };
+    PIBT2 exit_before_pressure_priority(
+        pressure_priority_graph, aligned_pibt_path_planner);
+    exit_before_pressure_priority.window = 1;
+    exit_before_pressure_priority.random_tiebreak = false;
+    exit_before_pressure_priority.pressure_privileged_inbound_count = 2;
+    exit_before_pressure_priority.set_pibt_policy("pressure_aware");
+    exit_before_pressure_priority.set_executed_priority_age({100, 0, 0, 0});
+    exit_before_pressure_priority.set_workstation_context(
+        exit_priority_contexts);
+    exit_before_pressure_priority.set_projected_goal_context(
+        exit_priority_projection);
+    REQUIRE(exit_before_pressure_priority.run(
+        priority_starts, priority_goals, 10));
+    REQUIRE(exit_before_pressure_priority.solution[1][1].location == 4);
+
     ThreeCellGraph three_cell_graph;
     StateTimeAStar pibt2_path_planner;
     PIBT2 pibt2_initial_distance(three_cell_graph, pibt2_path_planner);
@@ -539,6 +749,66 @@ int main()
     WorkstationAgentContext exit_context;
     exit_context.station_id = 0;
     exit_context.phase = WorkstationAgentPhase::TO_EXIT;
+    ThreeCellWorkstationGraph lead_graph;
+    PIBT2 lead_order(lead_graph, pibt2_path_planner);
+    lead_order.window = 1;
+    lead_order.random_tiebreak = false;
+    lead_order.set_pibt_policy("lead_aware");
+    lead_order.set_executed_priority_age({100, 0});
+    lead_order.set_workstation_context({inbound_context, inbound_context});
+    lead_order.set_projected_goal_context(
+        {{inbound_context}, {inbound_context}});
+    REQUIRE(lead_order.run(
+        {State(0, 0, -1), State(2, 0, -1)},
+        {{{1, 0}}, {{1, 0}}}, 10));
+    REQUIRE(lead_order.solution[0][1].location == 1);
+    REQUIRE(lead_order.solution[1][1].location == 2);
+
+    PIBT2 lead_tiebreak_order(lead_graph, pibt2_path_planner);
+    lead_tiebreak_order.window = 1;
+    lead_tiebreak_order.random_tiebreak = false;
+    lead_tiebreak_order.set_pibt_policy("lead_aware");
+    lead_tiebreak_order.set_executed_priority_age({0, 0});
+    lead_tiebreak_order.set_workstation_context(
+        {inbound_context, inbound_context});
+    lead_tiebreak_order.set_projected_goal_context(
+        {{inbound_context}, {inbound_context}});
+    REQUIRE(lead_tiebreak_order.run(
+        {State(0, 0, -1), State(2, 0, -1)},
+        {{{1, 0}}, {{1, 0}}}, 10));
+    REQUIRE(lead_tiebreak_order.solution[0][1].location == 0);
+    REQUIRE(lead_tiebreak_order.solution[1][1].location == 1);
+
+    PIBT2 pressure_lead_order(lead_graph, pibt2_path_planner);
+    pressure_lead_order.window = 1;
+    pressure_lead_order.random_tiebreak = false;
+    pressure_lead_order.set_pibt_policy("pressure_aware");
+    pressure_lead_order.set_executed_priority_age({100, 0});
+    pressure_lead_order.set_workstation_context(
+        {inbound_context, inbound_context});
+    pressure_lead_order.set_projected_goal_context(
+        {{inbound_context}, {inbound_context}});
+    REQUIRE(pressure_lead_order.run(
+        {State(0, 0, -1), State(2, 0, -1)},
+        {{{1, 0}}, {{1, 0}}}, 10));
+    REQUIRE(pressure_lead_order.solution[0][1].location == 1);
+    REQUIRE(pressure_lead_order.solution[1][1].location == 2);
+
+    PIBT2 pressure_lead_tiebreak_order(lead_graph, pibt2_path_planner);
+    pressure_lead_tiebreak_order.window = 1;
+    pressure_lead_tiebreak_order.random_tiebreak = false;
+    pressure_lead_tiebreak_order.set_pibt_policy("pressure_aware");
+    pressure_lead_tiebreak_order.set_executed_priority_age({0, 0});
+    pressure_lead_tiebreak_order.set_workstation_context(
+        {inbound_context, inbound_context});
+    pressure_lead_tiebreak_order.set_projected_goal_context(
+        {{inbound_context}, {inbound_context}});
+    REQUIRE(pressure_lead_tiebreak_order.run(
+        {State(0, 0, -1), State(2, 0, -1)},
+        {{{1, 0}}, {{1, 0}}}, 10));
+    REQUIRE(pressure_lead_tiebreak_order.solution[0][1].location == 0);
+    REQUIRE(pressure_lead_tiebreak_order.solution[1][1].location == 1);
+
     PIBT2 departure_order(three_cell_graph, pibt2_path_planner);
     departure_order.window = 1;
     departure_order.set_pibt_policy("departure_aware");
@@ -552,6 +822,43 @@ int main()
     REQUIRE(departure_order.solution[0][1].location == 1);
     REQUIRE(departure_order.solution[1][1].location == 2);
     REQUIRE(departure_order.inheritance_calls == 0);
+
+    for (const string& policy : {"vanilla", "lead_aware", "pressure_aware"})
+    {
+        PIBT2 shared_exit_order(three_cell_graph, pibt2_path_planner);
+        shared_exit_order.window = 1;
+        shared_exit_order.random_tiebreak = false;
+        shared_exit_order.set_pibt_policy(policy);
+        shared_exit_order.set_executed_priority_age({100, 0});
+        shared_exit_order.set_workstation_context(
+            {inbound_context, exit_context});
+        shared_exit_order.set_projected_goal_context(
+            {{inbound_context}, {exit_context}});
+        REQUIRE(shared_exit_order.run(
+            {State(0, 0, -1), State(1, 0, -1)},
+            {{{1, 0}}, {{2, 0}}}, 10));
+        REQUIRE(shared_exit_order.solution[0][1].location == 1);
+        REQUIRE(shared_exit_order.solution[1][1].location == 2);
+        REQUIRE(shared_exit_order.inheritance_calls == 0);
+    }
+
+    for (const string& policy : {"vanilla", "lead_aware", "pressure_aware"})
+    {
+        PIBT shared_legacy_exit_order(three_cell_graph, pibt2_path_planner);
+        shared_legacy_exit_order.window = 1;
+        shared_legacy_exit_order.random_tiebreak = false;
+        shared_legacy_exit_order.set_pibt_policy(policy);
+        shared_legacy_exit_order.set_executed_priority_age({100, 0});
+        shared_legacy_exit_order.set_workstation_context(
+            {inbound_context, exit_context});
+        shared_legacy_exit_order.set_projected_goal_context(
+            {{inbound_context}, {exit_context}});
+        REQUIRE(shared_legacy_exit_order.run(
+            {State(0, 0, -1), State(1, 0, -1)},
+            {{{1, 0}}, {{2, 0}}}, 10));
+        REQUIRE(shared_legacy_exit_order.solution[0][1].location == 1);
+        REQUIRE(shared_legacy_exit_order.solution[1][1].location == 2);
+    }
 
     WorkstationAgentContext service_context;
     service_context.station_id = 0;

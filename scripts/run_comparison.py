@@ -9,21 +9,26 @@ import os
 import platform
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
 METHODS = {
     "pbs_vanilla": {"solver": "PBS", "station_policy": "vanilla"},
+    "pbs_lead_aware": {"solver": "PBS", "station_policy": "lead_aware"},
     "pbs_departure_aware": {"solver": "PBS", "station_policy": "departure_aware"},
     "pbs_pressure_aware": {"solver": "PBS", "station_policy": "pressure_aware"},
     "pibt_vanilla": {"solver": "PIBT2", "pibt_policy": "vanilla"},
+    "pibt_lead_aware": {"solver": "PIBT2", "pibt_policy": "lead_aware"},
     "pibt_departure_aware": {"solver": "PIBT2", "pibt_policy": "departure_aware"},
     "pibt_pressure_aware": {"solver": "PIBT2", "pibt_policy": "pressure_aware"},
     "pibt2_vanilla": {"solver": "PIBT2", "pibt_policy": "vanilla"},
+    "pibt2_lead_aware": {"solver": "PIBT2", "pibt_policy": "lead_aware"},
     "pibt2_departure_aware": {"solver": "PIBT2", "pibt_policy": "departure_aware"},
     "pibt2_pressure_aware": {"solver": "PIBT2", "pibt_policy": "pressure_aware"},
     "pibt_legacy_vanilla": {"solver": "PIBT", "pibt_policy": "vanilla"},
+    "pibt_legacy_lead_aware": {"solver": "PIBT", "pibt_policy": "lead_aware"},
     "pibt_legacy_departure_aware": {"solver": "PIBT", "pibt_policy": "departure_aware"},
     "pibt_legacy_pressure_aware": {"solver": "PIBT", "pibt_policy": "pressure_aware"},
 }
@@ -34,23 +39,58 @@ PRESSURE_DEFINITION = {
     "pressure_task_metadata": "executed_only",
     "pressure_threshold": 3,
     "pressure_queue_cost": 2,
-    "pressure_privileged_inbound_count": 4,
+    "pressure_privileged_inbound_count": 2,
+    "pressure_privileged_right_of_way": "top_ranked_lead_queue_local_priority",
+    "pbs_pressure_right_of_way_count_per_station": 1,
+    "pibt_pressure_right_of_way_count_per_station": 1,
+    "pbs_pressure_queue_cost_scope": "each_planned_zone_occupancy",
+    "pibt_pressure_queue_cost_scope": "each_planned_zone_occupancy",
+    "pressure_priority_order": [
+        "mandatory_service_dwell", "to_exit",
+        "pressure_lead_near_target_queue", "native_solver_priority",
+    ],
+    "pbs_pressure_right_of_way": (
+        "preferred_conflict_branch_generated_first_both_branches_retained"
+    ),
+    "pibt_pressure_right_of_way": (
+        "pressure_lead_before_native_age_near_target_queue"
+    ),
     "pressure_privilege_key": [
         "inside_target_queue", "distance_to_workstation",
         "station_leg_issue_time", "agent_id",
     ],
-    "pressure_priority_parent": "departure_aware",
-    "departure_aware_protected_phases": ["TO_EXIT"],
+    "pressure_priority_parent": "lead_aware",
+    "lead_aware_priority_count_per_station": 1,
+    "lead_aware_priority_key": [
+        "inside_target_queue", "distance_to_workstation",
+        "station_leg_issue_time", "agent_id",
+    ],
+    "pbs_lead_aware_scope": "conflicts_touching_target_queue",
+    "pbs_lead_aware_branch_rule": (
+        "native_path_cost_then_conflict_count_then_lead_tiebreak"
+    ),
+    "pibt_lead_aware_scope": "current_or_one_action_touches_target_queue",
+    "pibt_lead_aware_branch_rule": (
+        "native_age_then_initial_distance_then_local_lead_tiebreak_then_seeded_tie"
+    ),
+    "shared_exit_requirement": "service_to_selected_exit_before_next_task",
+    "shared_exit_clearance_enabled": True,
+    "shared_exit_clearance_phase": "TO_EXIT",
+    "shared_exit_clearance_feasibility": "collision_constraints_unchanged",
     "mandatory_service_dwell": True,
     "mandatory_service_dwell_handling": "policy_independent",
-    "service_priority_enabled": False,
+    "pbs_mandatory_service_handling": (
+        "service_preserving_branch_first_both_branches_retained"
+    ),
+    "pibt_mandatory_service_handling": "forced_wait_before_policy_order",
+    "method_specific_service_priority_enabled": False,
     "traffic_jam_rule": (
         "rhcr_majority_wait_full_execution_window_and_no_service_completion"
     ),
 }
 PUBLICATION_METHODS = (
-    "pbs_vanilla", "pbs_departure_aware", "pbs_pressure_aware",
-    "pibt_vanilla", "pibt_departure_aware", "pibt_pressure_aware",
+    "pbs_vanilla", "pbs_lead_aware", "pbs_pressure_aware",
+    "pibt_vanilla", "pibt_lead_aware", "pibt_pressure_aware",
 )
 PIBT_RANDOMNESS = "simulation_seed_and_absolute_destination_timestep"
 RUN_OUTPUT_FILES = (
@@ -64,6 +104,59 @@ RUN_OUTPUT_FILES = (
 
 def parse_counts(value: str) -> list[int]:
     return [int(part.strip()) for part in value.split(",") if part.strip()]
+
+
+def workstation_start_capacity(path: Path) -> int:
+    payload = json.loads(path.read_text())
+    explicit = payload.get("adapter_valid_start_capacity")
+    if explicit is not None:
+        return int(explicit)
+
+    if "movingai_map" in payload:
+        map_path = (path.parent / payload["movingai_map"]).resolve()
+        lines = map_path.read_text().splitlines()
+        try:
+            map_start = lines.index("map") + 1
+        except ValueError as exc:
+            raise ValueError(f"Missing map section in {map_path}") from exc
+        traversable = {
+            (col, row)
+            for row, line in enumerate(lines[map_start:])
+            for col, cell in enumerate(line)
+            if cell in {".", "G", "S"}
+        }
+    else:
+        row_bounds = payload.get("walkable_rows", [0, int(payload["rows"]) - 1])
+        col_bounds = payload.get("walkable_cols", [0, int(payload["cols"]) - 1])
+        traversable = {
+            (col, row)
+            for row in range(int(row_bounds[0]), int(row_bounds[1]) + 1)
+            for col in range(int(col_bounds[0]), int(col_bounds[1]) + 1)
+        }
+
+    reserved = {tuple(cell) for cell in payload.get("pickup_endpoints", [])}
+    station_fields = (
+        "standby_cells", "buffer_cells", "approach_cells", "exit_cells"
+    )
+    for station in payload.get("stations", []):
+        reserved.add(tuple(station["workstation_cell"]))
+        for field in station_fields:
+            reserved.update(tuple(cell) for cell in station.get(field, []))
+    return len(traversable - reserved)
+
+
+def capacity_spaced_counts(capacity: int, start: int = 20, points: int = 19) -> list[int]:
+    if start < 1 or points < 2 or capacity <= start:
+        raise ValueError("capacity ladder requires capacity > start >= 1 and at least two points")
+    step = (capacity - start) // points
+    if step < 1:
+        raise ValueError(
+            f"Cannot fit {points} points from {start} below capacity {capacity}"
+        )
+    counts = [start + index * step for index in range(points)]
+    if counts[-1] + step > capacity:
+        raise AssertionError("capacity ladder must leave one full interval below capacity")
+    return counts
 
 
 def plaza_counts_below_floor(counts: list[int]) -> list[int]:
@@ -108,6 +201,13 @@ def status_is_reusable(existing: dict | None, run_signature: dict) -> bool:
     if isinstance(return_code, int) and return_code < 0:
         return False
     return signatures_match(existing.get("run_signature"), run_signature)
+
+
+def all_cells_failed(statuses: list[dict | None]) -> bool:
+    return bool(statuses) and all(
+        status is not None and status.get("status") == "failed"
+        for status in statuses
+    )
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -195,16 +295,28 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
 
     parser = argparse.ArgumentParser(description="Run the paper comparison on the workstation benchmarks.")
-    parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed6to25"))
+    parser.add_argument("--root", default=str(repo_root / "results" / "main_tau3_w20_h5_seed26to30"))
     parser.add_argument("--binary", default=str(repo_root / "lifelong"))
-    parser.add_argument("--seed-start", type=int, default=6)
-    parser.add_argument("--seed-count", type=int, default=20)
+    parser.add_argument("--seed-start", type=int, default=26)
+    parser.add_argument("--seed-count", type=int, default=5)
     parser.add_argument("--seed-list", type=parse_seed_list)
     parser.add_argument("--pickup-layout-seed", type=int, default=1)
     parser.add_argument("--simulation-time", type=int, default=1000)
     parser.add_argument("--planning-window", type=int, default=20)
     parser.add_argument("--simulation-window", type=int, default=5)
     parser.add_argument("--service-time", type=int, default=3)
+    parser.add_argument(
+        "--pressure-k",
+        type=int,
+        default=PRESSURE_DEFINITION["pressure_privileged_inbound_count"],
+        help="Number of inbound agents exempt from the pressure queue cost.",
+    )
+    parser.add_argument(
+        "--pressure-threshold",
+        type=int,
+        default=PRESSURE_DEFINITION["pressure_threshold"],
+        help="Queue-region occupancy that activates pressure.",
+    )
     fallback_group = parser.add_mutually_exclusive_group()
     fallback_group.add_argument(
         "--lra-fallback", "--allow-fallbacks", dest="lra_fallback",
@@ -223,7 +335,7 @@ def main() -> int:
     parser.add_argument("--no-pibt-random-tiebreak", dest="pibt_random_tiebreak", action="store_false")
     parser.set_defaults(pibt_random_tiebreak=True)
     parser.add_argument("--cutoff-time", type=int, default=60)
-    parser.add_argument("--process-timeout", type=int, default=1800)
+    parser.add_argument("--process-timeout", type=int, default=600)
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--screen", type=int, default=0)
     parser.add_argument(
@@ -233,6 +345,23 @@ def main() -> int:
     )
     parser.add_argument("--alley-counts", default="10,20,30,40,50")
     parser.add_argument("--plaza-counts", default="20,30,40,50,60")
+    parser.add_argument(
+        "--human-capacity-points",
+        type=int,
+        default=0,
+        help=(
+            "Override Alley and Plaza counts with this many equally spaced points "
+            "from 20, leaving one full interval below valid-start capacity."
+        ),
+    )
+    parser.add_argument(
+        "--stop-at-first-all-failed-count",
+        action="store_true",
+        help=(
+            "Evaluate each map in ascending count order and retire each method "
+            "after its first count where every seed fails."
+        ),
+    )
     parser.add_argument("--lorr-counts", default="", help="Agent counts for the adapted LoRR warehouse-small benchmark.")
     parser.add_argument(
         "--lorr-sortation-counts",
@@ -294,6 +423,14 @@ def main() -> int:
         help="Keep per-agent paths.txt trajectories for clean runs (disabled by default).",
     )
     args = parser.parse_args()
+    if args.process_timeout <= 0:
+        parser.error("--process-timeout must be positive")
+    if args.jobs <= 0:
+        parser.error("--jobs must be positive")
+    if args.pressure_k < 0:
+        parser.error("--pressure-k must be nonnegative")
+    if args.pressure_threshold <= 0:
+        parser.error("--pressure-threshold must be positive")
 
     root = Path(args.root)
     root.mkdir(parents=True, exist_ok=True)
@@ -304,14 +441,36 @@ def main() -> int:
     source_provenance = git_provenance(repo_root)
 
     seeds = args.seed_list if args.seed_list is not None else list(range(args.seed_start, args.seed_start + args.seed_count))
+    human_benchmarks = {
+        "alley": repo_root / "benchmarks" / "alley.json",
+        "plaza": repo_root / "benchmarks" / "plaza.json",
+    }
+    human_capacities = {
+        name: workstation_start_capacity(benchmark)
+        for name, benchmark in human_benchmarks.items()
+    }
+    if args.human_capacity_points:
+        if args.human_capacity_points < 2:
+            parser.error("--human-capacity-points must be at least 2")
+        human_counts = {
+            name: capacity_spaced_counts(
+                human_capacities[name], points=args.human_capacity_points
+            )
+            for name in human_benchmarks
+        }
+    else:
+        human_counts = {
+            "alley": parse_counts(args.alley_counts),
+            "plaza": parse_counts(args.plaza_counts),
+        }
     grids = {
         "alley": {
-            "benchmark": repo_root / "benchmarks" / "alley.json",
-            "counts": parse_counts(args.alley_counts),
+            "benchmark": human_benchmarks["alley"],
+            "counts": human_counts["alley"],
         },
         "plaza": {
-            "benchmark": repo_root / "benchmarks" / "plaza.json",
-            "counts": parse_counts(args.plaza_counts),
+            "benchmark": human_benchmarks["plaza"],
+            "counts": human_counts["plaza"],
         },
     }
     lorr_counts = parse_counts(args.lorr_counts)
@@ -359,6 +518,8 @@ def main() -> int:
             "simulation_window": args.simulation_window,
             "service_time": args.service_time,
             **PRESSURE_DEFINITION,
+            "pressure_threshold": args.pressure_threshold,
+            "pressure_privileged_inbound_count": args.pressure_k,
             "lra_fallback_enabled": args.lra_fallback,
             "native_failures_only": not args.lra_fallback,
             "commitment_repair": args.commitment_repair,
@@ -369,6 +530,13 @@ def main() -> int:
             "jobs": args.jobs,
             "screen": args.screen,
             "keep_paths": args.keep_paths,
+            "human_count_ladder": {
+                "rule": "capacity_spaced_below_valid_start_limit" if args.human_capacity_points else "explicit",
+                "start": 20 if args.human_capacity_points else None,
+                "points": args.human_capacity_points or None,
+                "valid_start_capacity": human_capacities,
+            },
+            "stop_at_first_all_failed_count": args.stop_at_first_all_failed_count,
             "platform": platform.platform(),
             "logical_cpu_count": os.cpu_count(),
             "binary": str(binary.resolve()),
@@ -412,6 +580,8 @@ def main() -> int:
             "simulation_window": args.simulation_window,
             "service_time": args.service_time,
             **PRESSURE_DEFINITION,
+            "pressure_threshold": args.pressure_threshold,
+            "pressure_privileged_inbound_count": args.pressure_k,
             "lra_fallback_enabled": args.lra_fallback,
             "native_failures_only": not args.lra_fallback,
             "commitment_repair": args.commitment_repair,
@@ -448,6 +618,8 @@ def main() -> int:
             "run_signature": run_signature,
             "output_dir": str(cell_dir),
         }
+        started_at_unix = time.time()
+        started_at_monotonic = time.monotonic()
         write_json(
             status_path,
             {
@@ -455,6 +627,7 @@ def main() -> int:
                 "status": "running",
                 "failure_reason": "",
                 "return_code": None,
+                "started_at_unix": started_at_unix,
             },
         )
         cmd = [
@@ -468,6 +641,8 @@ def main() -> int:
             "--simulation_window", str(args.simulation_window),
             "--planning_window", str(args.planning_window),
             "--service_time", str(args.service_time),
+            "--pressure_k", str(args.pressure_k),
+            "--pressure_threshold", str(args.pressure_threshold),
             "--cutoffTime", str(args.cutoff_time),
             "--seed", str(seed),
             "--screen", str(args.screen),
@@ -497,6 +672,7 @@ def main() -> int:
                 return_code = 124
 
         status, failure_reason = classify_run(log_path, summary_path, return_code, timed_out)
+        finished_at_unix = time.time()
         write_json(
             status_path,
             {
@@ -504,21 +680,94 @@ def main() -> int:
                 "status": status,
                 "failure_reason": failure_reason,
                 "return_code": return_code,
+                "started_at_unix": started_at_unix,
+                "finished_at_unix": finished_at_unix,
+                "wall_time_seconds": time.monotonic() - started_at_monotonic,
             },
         )
         if status == "clean" and not args.keep_paths:
             (cell_dir / "paths.txt").unlink(missing_ok=True)
         log(f"[done] {map_name} {agent_count} {method_name} seed {seed} -> {status}")
 
-    futures = []
+    evaluated_grids: dict[str, list[int]] = {name: [] for name in grids}
+    evaluated_method_grids: dict[str, dict[str, list[int]]] = {
+        name: {method_name: [] for method_name in args.methods}
+        for name in grids
+    }
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        for map_name, config in grids.items():
-            for agent_count in config["counts"]:
+        if args.stop_at_first_all_failed_count:
+            def run_method_ladder(
+                map_name: str, counts: list[int], method_name: str
+            ) -> None:
+                for agent_count in counts:
+                    futures = [
+                        pool.submit(
+                            run_case, map_name, agent_count, method_name, seed
+                        )
+                        for seed in seeds
+                    ]
+                    for future in futures:
+                        future.result()
+                    evaluated_method_grids[map_name][method_name].append(agent_count)
+                    statuses = [
+                        load_status(
+                            root / map_name / f"agents_{agent_count}" /
+                            method_name / f"seed_{seed}" / "status.json"
+                        )
+                        for seed in seeds
+                    ]
+                    if all_cells_failed(statuses):
+                        log(
+                            f"[terminal] {map_name} {agent_count} "
+                            f"{method_name}: all seeds failed"
+                        )
+                        return
+
+            ladder_count = len(grids) * len(args.methods)
+            with ThreadPoolExecutor(max_workers=ladder_count) as ladder_pool:
+                ladder_futures = [
+                    ladder_pool.submit(
+                        run_method_ladder,
+                        map_name,
+                        config["counts"],
+                        method_name,
+                    )
+                    for map_name, config in grids.items()
+                    for method_name in args.methods
+                ]
+                for future in ladder_futures:
+                    future.result()
+            for map_name, method_grids in evaluated_method_grids.items():
+                evaluated_grids[map_name] = sorted({
+                    count
+                    for method_counts in method_grids.values()
+                    for count in method_counts
+                })
+        else:
+            futures = []
+            for map_name, config in grids.items():
+                evaluated_grids[map_name].extend(config["counts"])
                 for method_name in args.methods:
-                    for seed in seeds:
-                        futures.append(pool.submit(run_case, map_name, agent_count, method_name, seed))
-        for future in futures:
-            future.result()
+                    evaluated_method_grids[map_name][method_name].extend(
+                        config["counts"]
+                    )
+                for agent_count in config["counts"]:
+                    for method_name in args.methods:
+                        for seed in seeds:
+                            futures.append(
+                                pool.submit(
+                                    run_case, map_name, agent_count,
+                                    method_name, seed
+                                )
+                            )
+            for future in futures:
+                future.result()
+
+    manifest_path = root / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["evaluated_grids"] = evaluated_grids
+    manifest["evaluated_method_grids"] = evaluated_method_grids
+    write_json(manifest_path, manifest)
 
     return 0
 

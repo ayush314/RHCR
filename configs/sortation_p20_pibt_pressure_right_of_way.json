@@ -1,0 +1,50 @@
+{
+  "experiment": "final_sortation_p20_pibt_pressure_right_of_way",
+  "pickup_retention_percent": 20,
+  "methods": [
+    "pibt_pressure_aware"
+  ],
+  "pickup_layout_seeds": [
+    2,
+    3,
+    4
+  ],
+  "simulation_seeds": [
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "simulation_time": 1000,
+  "planning_window": 20,
+  "simulation_window": 5,
+  "service_time": 3,
+  "pressure_privileged_inbound_count": 2,
+  "cutoff_time": 60,
+  "process_timeout": 600,
+  "stop_at_first_all_failed_count": true,
+  "maps": {
+    "small": {
+      "benchmark_template": "benchmarks/lorr/sortation_small_p20_layout{layout}.json",
+      "result_name": "lorr_sortation_small_p20",
+      "valid_start_capacity": 1029,
+      "counts": [50, 100, 150, 200, 250, 300, 350, 400, 450, 500,
+                 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000]
+    },
+    "medium": {
+      "benchmark_template": "benchmarks/lorr/sortation_medium_p20_layout{layout}.json",
+      "result_name": "lorr_sortation_medium_p20",
+      "valid_start_capacity": 17557,
+      "counts": [850, 1700, 2550, 3400, 4250, 5100, 5950, 6800, 7650, 8500,
+                 9350, 10200, 11050, 11900, 12750, 13600, 14450, 15300, 16150, 17000]
+    },
+    "large": {
+      "benchmark_template": "benchmarks/lorr/sortation_large_p20_layout{layout}.json",
+      "result_name": "lorr_sortation_large_p20",
+      "valid_start_capacity": 44317,
+      "counts": [2100, 4200, 6300, 8400, 10500, 12600, 14700, 16800, 18900, 21000,
+                 23100, 25200, 27300, 29400, 31500, 33600, 35700, 37800, 39900, 42000]
+    }
+  }
+}

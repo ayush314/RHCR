@@ -9,10 +9,12 @@ from pathlib import Path
 
 
 HUMAN_METHODS = (
-    "pbs_vanilla,pbs_departure_aware,pbs_pressure_aware,"
-    "pibt_vanilla,pibt_departure_aware,pibt_pressure_aware"
+    "pbs_vanilla,pbs_lead_aware,pbs_pressure_aware,"
+    "pibt_vanilla,pibt_lead_aware,pibt_pressure_aware"
 )
-PIBT_METHODS = "pibt_vanilla,pibt_departure_aware,pibt_pressure_aware"
+PIBT_METHODS = "pibt_vanilla,pibt_lead_aware,pibt_pressure_aware"
+HUMAN_FINAL_SEEDS = list(range(26, 31))
+SORTATION_FINAL_SEEDS = list(range(6, 11))
 
 
 def counts_arg(values: list[int]) -> str:
@@ -56,7 +58,7 @@ def main() -> int:
     parser.add_argument("--stage", choices=("pretest", "discover", "human", "sortation", "sensitivity", "aggregate", "all"), required=True)
     parser.add_argument("--service-time", type=int, default=3)
     parser.add_argument("--jobs", type=int, default=6)
-    parser.add_argument("--process-timeout", type=int, default=1800)
+    parser.add_argument("--process-timeout", type=int, default=600)
     parser.add_argument(
         "--pretest-conditions", default="alley,plaza,sortation_medium_p20",
         help="Comma-separated conditions used by the pretest stage.",
@@ -75,7 +77,7 @@ def main() -> int:
             pretested = root / "pretested_experiment_config.json"
             command = [sys.executable, str(repo / "scripts/discover_development_counts.py"),
                        "--config", str(active_config), "--output", str(pretested),
-                       "--root", str(root / "development/departure_pretest"),
+                       "--root", str(root / "development/lead_pretest"),
                        "--binary", str(Path(args.binary).resolve()), "--jobs", str(args.jobs),
                        "--process-timeout", str(args.process_timeout),
                        "--conditions", args.pretest_conditions]
@@ -107,12 +109,12 @@ def main() -> int:
                         min(human["pibt_extended"][map_name]) <= max(human["common"][map_name]):
                     raise SystemExit(f"Extended PIBT ladder must start above the common {map_name} ladder")
             command = comparison_base(repo, root / "final" / "human_common", args)
-            command += ["--seed-list", counts_arg(list(range(6, 26))), "--methods", HUMAN_METHODS,
+            command += ["--seed-list", counts_arg(HUMAN_FINAL_SEEDS), "--methods", HUMAN_METHODS,
                         "--alley-counts", counts_arg(human["common"]["alley"]),
                         "--plaza-counts", counts_arg(human["common"]["plaza"])]
             run(command)
             command = comparison_base(repo, root / "final" / "human_pibt_extended", args)
-            command += ["--seed-list", counts_arg(list(range(6, 26))), "--methods", PIBT_METHODS,
+            command += ["--seed-list", counts_arg(HUMAN_FINAL_SEEDS), "--methods", PIBT_METHODS,
                         "--alley-counts", counts_arg(human["pibt_extended"]["alley"]),
                         "--plaza-counts", counts_arg(human["pibt_extended"]["plaza"])]
             run(command)
@@ -128,7 +130,7 @@ def main() -> int:
                         option = f"--lorr-sortation-{'medium-' if map_name == 'medium' else 'large-' if map_name == 'large' else ''}counts"
                         bench_option = option.replace("counts", "benchmark")
                         name_option = option.replace("counts", "name")
-                        command += ["--seed-list", "6,7,8,9,10", "--pickup-layout-seed", str(layout),
+                        command += ["--seed-list", counts_arg(SORTATION_FINAL_SEEDS), "--pickup-layout-seed", str(layout),
                                     "--methods", PIBT_METHODS, "--alley-counts", "", "--plaza-counts", "",
                                     option, counts_arg(ladder["counts"]), bench_option, str(benchmark),
                                     name_option, f"lorr_sortation_{map_name}_p{density:02d}"]
@@ -139,7 +141,7 @@ def main() -> int:
                     args.service_time = tau
                     command = comparison_base(repo, root / f"sensitivity/{condition['name']}/tau_{tau}", args)
                     is_human = bool(condition.get("alley"))
-                    seeds = list(range(6, 26)) if is_human else list(range(6, 11))
+                    seeds = HUMAN_FINAL_SEEDS if is_human else SORTATION_FINAL_SEEDS
                     methods = condition.get("methods", HUMAN_METHODS if is_human else PIBT_METHODS)
                     command += ["--seed-list", counts_arg(seeds),
                                 "--methods", methods,

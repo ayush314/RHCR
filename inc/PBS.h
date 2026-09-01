@@ -14,6 +14,8 @@ public:
     bool lazyPriority;
     bool prioritize_start = true;
     string station_policy = "vanilla";
+    int pressure_privileged_inbound_count =
+        kWorkstationPrivilegedInboundCount;
     vector<WorkstationAgentContext> workstation_context;
     vector<vector<WorkstationAgentContext>> projected_goal_context;
 
@@ -36,6 +38,8 @@ public:
 	uint64_t HL_num_generated = 0;
 	uint64_t LL_num_expanded = 0;
 	uint64_t LL_num_generated = 0;
+	uint64_t pressure_cost_evaluations = 0;
+	uint64_t pressure_cost_applications = 0;
 
 	// Runs the algorithm until the problem is solved or time is exhausted 
     bool run(const vector<State>& starts,
@@ -78,7 +82,7 @@ private:
 
 	// double focal_w = 1.0;
     unordered_set<pair<int, int>> nogood;
-    vector<WorkstationPressureBaseSnapshot> workstation_pressure_projection;
+    vector<WorkstationPressureBaseSnapshot> workstation_pressure_base_projection;
 
     // SingleAgentICBS astar;
 
@@ -131,12 +135,17 @@ private:
     static bool wait_at_start(const Path& path, int start_location, int timestep) ;
     void find_replan_agents(PBSNode* node, const list<Conflict>& conflicts,
             unordered_set<int>& replan);
-    bool prefer_workstation_branch(const Conflict& conflict, pair<int, int>& preferred_priority) const;
+    bool prefer_workstation_branch(
+        const Conflict& conflict, pair<int, int>& preferred_priority,
+        bool& direct_preference) const;
+    vector<int> workstation_lead_agents_at(int local_t) const;
+    WorkstationPressureSnapshot workstation_pressure_at(
+        int local_t, vector<int>* lead_agents = nullptr) const;
     WorkstationAgentContext projected_context_at(int agent, int local_t) const;
     WorkstationAgentContext projected_context_for_goal(
         int agent, int goal_id) const;
     void prepare_workstation_pressure_projection(int agent);
     int workstation_transition_cost(
-        int agent, const State& current, const State& next, int goal_id) const;
+        int agent, const State& current, const State& next, int goal_id);
     Path run_low_level_path(int agent, ReservationTable& reservations);
 };

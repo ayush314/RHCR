@@ -136,9 +136,11 @@ int main(int argc, char** argv)
         ("planning_window", po::value<int>()->default_value(20),
 			        "the planner outputs plans with first planning_window timesteps collision-free")
         ("service_time", po::value<int>()->default_value(3), "workstation dwell time")
-        ("station_policy", po::value<string>()->default_value("vanilla"), "workstation planning policy (vanilla, departure_aware, pressure_aware)")
+		("station_policy", po::value<string>()->default_value("vanilla"), "workstation planning policy (vanilla, lead_aware, departure_aware, pressure_aware)")
         ("stop_at_traffic_jam", po::value<bool>()->default_value(true), "stop workstation simulations when the traffic-jam detector triggers")
-        ("pibt_policy", po::value<string>()->default_value("vanilla"), "PIBT workstation policy (vanilla, departure_aware, pressure_aware)")
+        ("pibt_policy", po::value<string>()->default_value("vanilla"), "PIBT workstation policy (vanilla, lead_aware, departure_aware, pressure_aware)")
+		("pressure_k", po::value<int>()->default_value(kWorkstationPrivilegedInboundCount), "number of pressured inbound agents exempt from queue cost; the top lead receives queue-local right of way")
+		("pressure_threshold", po::value<int>()->default_value(kWorkstationPressureThreshold), "number of agents occupying a workstation queue region that activates pressure")
 		("native_failures_only", po::value<bool>()->default_value(false), "disable failure-time LRA fallback")
 		("commitment_repair", po::value<bool>()->default_value(false), "enable exploratory post-solve workstation commitment repair")
         ("pibt_random_tiebreak", po::value<bool>()->default_value(true), "use a seeded random final PIBT preference tiebreak")
@@ -203,9 +205,10 @@ int main(int argc, char** argv)
             exit(-1);
         }
         if (vm["agentNum"].as<int>() <= 0 || vm["simulation_window"].as<int>() <= 0 ||
-            vm["planning_window"].as<int>() <= 0 || vm["service_time"].as<int>() < 0)
+            vm["planning_window"].as<int>() <= 0 || vm["service_time"].as<int>() < 0 ||
+            vm["pressure_k"].as<int>() < 0 || vm["pressure_threshold"].as<int>() <= 0)
         {
-            std::cerr << "WORKSTATION requires positive agent and window counts and nonnegative service time" << endl;
+            std::cerr << "WORKSTATION requires positive agent, window, and pressure_threshold values and nonnegative service time and pressure_k" << endl;
             exit(-1);
         }
         string workstation_solver = vm["solver"].as<string>();
@@ -221,7 +224,7 @@ int main(int argc, char** argv)
             ((workstation_solver == "PIBT" || workstation_solver == "PIBT2") &&
              !is_valid_workstation_policy(pibt_policy)))
         {
-            std::cerr << "WORKSTATION policy must be vanilla, departure_aware, or pressure_aware" << endl;
+            std::cerr << "WORKSTATION policy must be vanilla, lead_aware, departure_aware, or pressure_aware" << endl;
             exit(-1);
         }
     }
@@ -340,9 +343,11 @@ int main(int argc, char** argv)
         MAPFSolver* solver = set_solver(G, vm);
         WorkstationSystem system(G, *solver);
         set_parameters(system, vm);
+        set_workstation_pressure_threshold(vm["pressure_threshold"].as<int>());
         system.workstation_service_time = vm["service_time"].as<int>();
         system.station_policy = vm["station_policy"].as<string>();
         system.pibt_policy = vm["pibt_policy"].as<string>();
+        system.pressure_privileged_inbound_count = vm["pressure_k"].as<int>();
         system.native_failures_only = vm["native_failures_only"].as<bool>();
         system.commitment_repair = vm["commitment_repair"].as<bool>();
         system.stop_at_traffic_jam = vm["stop_at_traffic_jam"].as<bool>();

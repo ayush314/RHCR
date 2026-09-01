@@ -44,6 +44,8 @@ public:
     int workstation_service_time = 3;
     string station_policy = "vanilla";
     string pibt_policy = "vanilla";
+    int pressure_privileged_inbound_count =
+        kWorkstationPrivilegedInboundCount;
     bool native_failures_only = false;
     bool commitment_repair = false;
     bool stop_at_traffic_jam = true;
@@ -72,6 +74,8 @@ private:
     uint64_t pibt_backtracks_total = 0;
     uint64_t pibt_wait_fallbacks_total = 0;
     uint64_t pibt_pressure_rank_changes_total = 0;
+    uint64_t pbs_pressure_cost_evaluations_total = 0;
+    uint64_t pbs_pressure_cost_applications_total = 0;
     int lra_fallback_episodes = 0;
     uint64_t lra_fallback_wait_commands = 0;
     bool last_episode_used_lra_fallback = false;
